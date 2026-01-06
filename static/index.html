@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>TMUX TERMINAL</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
+    <style>
+        :root {
+            --void: #050505;
+            --terminal-bg: #0a0a0a;
+            --matrix-green: #00ff41;
+            --matrix-dim: #00aa2a;
+            --matrix-glow: #00ff4180;
+            --scanline-opacity: 0.03;
+        }
+
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            height: 100%;
+            overflow: hidden;
+        }
+
+        body {
+            font-family: 'IBM Plex Mono', monospace;
+            background: var(--void);
+            color: var(--matrix-green);
+            display: flex;
+            flex-direction: column;
+            height: 100%;
+        }
+
+        /* CRT Scanline Effect */
+        .scanlines {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1000;
+            background: repeating-linear-gradient(
+                0deg,
+                rgba(0, 255, 65, var(--scanline-opacity)) 0px,
+                rgba(0, 255, 65, var(--scanline-opacity)) 1px,
+                transparent 1px,
+                transparent 3px
+            );
+        }
+
+
+        /* Main Terminal Area */
+        .terminal-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            padding: 0;
+            gap: 0;
+            min-height: 0;
+        }
+
+        .split-container {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 0;
+            min-height: 0;
+        }
+
+        .terminal-frame {
+            flex: 1;
+            position: relative;
+            border: 1px solid var(--matrix-dim);
+            background: var(--terminal-bg);
+            display: flex;
+            flex-direction: column;
+            min-height: 0;
+        }
+
+        .terminal-frame::before {
+            content: '';
+            position: absolute;
+            top: -1px;
+            left: -1px;
+            right: -1px;
+            bottom: -1px;
+            border: 1px solid var(--matrix-green);
+            opacity: 0.3;
+            pointer-events: none;
+        }
+
+        .terminal-header {
+            display: none;
+        }
+
+        .terminal-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--matrix-green);
+            box-shadow: 0 0 6px var(--matrix-green);
+            animation: blink 1s ease-in-out infinite;
+        }
+
+        @keyframes blink {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.3; }
+        }
+
+        /* Output pane - bottom, takes remaining space */
+        .output-frame {
+            flex: 1;
+            min-height: 0;
+        }
+
+        .output-content {
+            flex: 1;
+            width: 100%;
+            overflow-y: auto;
+            overflow-x: hidden;
+            background: transparent;
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 6pt;
+            line-height: 1.2;
+            padding: 2px 4px;
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .output-content::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .output-content::-webkit-scrollbar-track {
+            background: var(--terminal-bg);
+        }
+
+        .output-content::-webkit-scrollbar-thumb {
+            background: var(--matrix-dim);
+        }
+
+        /* Input pane - top, fixed height */
+        .input-frame {
+            flex: 0 0 36px !important;
+            height: 36px;
+            min-height: 36px;
+            max-height: 36px;
+        }
+
+        .command-input {
+            width: 100%;
+            height: 100%;
+            background: transparent;
+            border: none;
+            color: var(--matrix-green);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: clamp(1rem, 4vw, 1.25rem);
+            padding: 4px 6px;
+            resize: none;
+            outline: none;
+            caret-color: var(--matrix-green);
+            line-height: 1.4;
+        }
+
+        .command-input::placeholder {
+            color: var(--matrix-dim);
+            opacity: 0.5;
+        }
+
+        .command-input::selection {
+            background: var(--matrix-green);
+            color: var(--void);
+        }
+
+        /* Session Input */
+        .session-bar {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            padding: 4px 6px;
+            background: var(--terminal-bg);
+            border-bottom: 1px solid var(--matrix-dim);
+            flex-shrink: 0;
+        }
+
+        .session-label {
+            font-size: 0.75rem;
+            color: var(--matrix-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            white-space: nowrap;
+        }
+
+        .session-select {
+            flex: 1;
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-dim);
+            color: var(--matrix-green);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.8rem;
+            padding: 4px 6px;
+            outline: none;
+            cursor: pointer;
+            appearance: none;
+            -webkit-appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2300ff41' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 4px center;
+            padding-right: 1.5rem;
+        }
+
+        .session-select:focus {
+            border-color: var(--matrix-green);
+            box-shadow: 0 0 10px var(--matrix-glow);
+        }
+
+        .session-select option {
+            background: var(--terminal-bg);
+            color: var(--matrix-green);
+            padding: 0.5rem;
+        }
+
+        .refresh-btn {
+            background: transparent;
+            border: 1px solid var(--matrix-dim);
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.65rem;
+            padding: 4px 8px;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .refresh-btn:hover {
+            border-color: var(--matrix-green);
+            color: var(--matrix-green);
+        }
+
+        .refresh-btn.loading {
+            opacity: 0.5;
+            pointer-events: none;
+        }
+
+        /* Send Button */
+        .send-btn {
+            width: 100%;
+            padding: 12px;
+            background: transparent;
+            border: 1px solid var(--matrix-green);
+            color: var(--matrix-green);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 1rem;
+            font-weight: 700;
+            letter-spacing: 0.2em;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+            transition: all 0.3s ease;
+            flex-shrink: 0;
+            text-transform: uppercase;
+        }
+
+        .send-btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(
+                90deg,
+                transparent,
+                rgba(0, 255, 65, 0.2),
+                transparent
+            );
+            transition: left 0.5s ease;
+        }
+
+        .send-btn:hover::before,
+        .send-btn:active::before {
+            left: 100%;
+        }
+
+        .send-btn:hover,
+        .send-btn:active {
+            background: rgba(0, 255, 65, 0.1);
+            box-shadow:
+                0 0 20px var(--matrix-glow),
+                inset 0 0 20px rgba(0, 255, 65, 0.1);
+            text-shadow: 0 0 10px var(--matrix-green);
+        }
+
+        .send-btn:active {
+            transform: scale(0.98);
+        }
+
+        .send-btn:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
+        /* Status Messages */
+        .status {
+            position: fixed;
+            bottom: 1rem;
+            left: 50%;
+            transform: translateX(-50%);
+            padding: 0.75rem 1.5rem;
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            font-size: 0.8rem;
+            z-index: 1001;
+            opacity: 0;
+            transition: opacity 0.3s ease;
+            pointer-events: none;
+        }
+
+        .status.show {
+            opacity: 1;
+        }
+
+        .status.error {
+            border-color: #ff0040;
+            color: #ff0040;
+        }
+
+        .status.success {
+            border-color: var(--matrix-green);
+            color: var(--matrix-green);
+            text-shadow: 0 0 10px var(--matrix-glow);
+        }
+
+        /* Vignette */
+        .vignette {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 998;
+            background: radial-gradient(
+                ellipse at center,
+                transparent 0%,
+                transparent 60%,
+                rgba(0, 0, 0, 0.4) 100%
+            );
+        }
+    </style>
+</head>
+<body>
+    <div class="scanlines"></div>
+    <div class="vignette"></div>
+
+    <main class="terminal-container">
+        <div class="session-bar">
+            <span class="session-label">TARGET:</span>
+            <select class="session-select" id="sessionSelect">
+                <option value="">Loading...</option>
+            </select>
+            <button class="refresh-btn" id="refreshBtn">REFRESH</button>
+        </div>
+
+        <div class="terminal-frame input-frame">
+            <textarea
+                class="command-input"
+                id="commandInput"
+                placeholder="Enter command..."
+                autocomplete="off"
+                autocorrect="off"
+                autocapitalize="off"
+                spellcheck="false"
+            ></textarea>
+        </div>
+
+        <button class="send-btn" id="sendBtn">
+            EXECUTE
+        </button>
+
+        <div class="terminal-frame output-frame">
+            <div class="output-content" id="outputContent">Connecting...</div>
+        </div>
+    </main>
+
+    <div class="status" id="status"></div>
+
+    <script>
+        const commandInput = document.getElementById('commandInput');
+        const sessionSelect = document.getElementById('sessionSelect');
+        const refreshBtn = document.getElementById('refreshBtn');
+        const sendBtn = document.getElementById('sendBtn');
+        const outputContent = document.getElementById('outputContent');
+        const status = document.getElementById('status');
+
+        let captureInterval = null;
+
+        function showStatus(message, type = 'success') {
+            status.textContent = message;
+            status.className = `status show ${type}`;
+            setTimeout(() => {
+                status.classList.remove('show');
+            }, 2000);
+        }
+
+        async function captureOutput() {
+            const target = sessionSelect.value;
+            if (!target) return;
+
+            try {
+                const response = await fetch('/api/capture', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target }),
+                });
+                const data = await response.json();
+
+                if (data.content) {
+                    const wasAtBottom = outputContent.scrollHeight - outputContent.scrollTop <= outputContent.clientHeight + 50;
+                    outputContent.textContent = data.content;
+                    if (wasAtBottom) {
+                        outputContent.scrollTop = outputContent.scrollHeight;
+                    }
+                }
+            } catch (err) {
+                // Silent fail for polling
+            }
+        }
+
+        function startCapture() {
+            if (captureInterval) clearInterval(captureInterval);
+            captureOutput();
+            captureInterval = setInterval(captureOutput, 1000);
+        }
+
+        async function loadWindows() {
+            refreshBtn.classList.add('loading');
+            refreshBtn.textContent = '...';
+
+            try {
+                const response = await fetch('/api/windows');
+                const windows = await response.json();
+
+                sessionSelect.innerHTML = '';
+
+                if (windows.length === 0) {
+                    sessionSelect.innerHTML = '<option value="">No windows found</option>';
+                } else {
+                    const savedTarget = localStorage.getItem('tmux-selected-target');
+                    let foundSaved = false;
+
+                    windows.forEach((win, index) => {
+                        const option = document.createElement('option');
+                        option.value = win.target;
+                        option.textContent = `${win.target} - ${win.name}`;
+                        // Select saved target if it exists, otherwise default to first
+                        if (savedTarget && win.target === savedTarget) {
+                            option.selected = true;
+                            foundSaved = true;
+                        } else if (!savedTarget && index === 0) {
+                            option.selected = true;
+                        }
+                        sessionSelect.appendChild(option);
+                    });
+
+                    // If saved target wasn't found, select first and clear invalid saved value
+                    if (savedTarget && !foundSaved && windows.length > 0) {
+                        sessionSelect.selectedIndex = 0;
+                        localStorage.removeItem('tmux-selected-target');
+                    }
+
+                    startCapture();
+                }
+            } catch (err) {
+                sessionSelect.innerHTML = '<option value="0">0 (default)</option>';
+                showStatus('FAILED TO LOAD WINDOWS', 'error');
+            } finally {
+                refreshBtn.classList.remove('loading');
+                refreshBtn.textContent = 'REFRESH';
+            }
+        }
+
+        async function sendCommand() {
+            const command = commandInput.value.trim();
+            const session = sessionSelect.value || '0';
+
+            sendBtn.disabled = true;
+            sendBtn.textContent = 'SENDING...';
+
+            try {
+                const response = await fetch('/api/send', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ command, session }),
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showStatus(command ? 'COMMAND SENT' : 'ENTER SENT', 'success');
+                    commandInput.value = '';
+                    // Immediately capture to show result
+                    setTimeout(captureOutput, 100);
+                } else {
+                    showStatus(data.error || 'TRANSMISSION FAILED', 'error');
+                }
+            } catch (err) {
+                showStatus('CONNECTION ERROR', 'error');
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.textContent = 'EXECUTE';
+            }
+        }
+
+        sendBtn.addEventListener('click', sendCommand);
+        refreshBtn.addEventListener('click', loadWindows);
+        sessionSelect.addEventListener('change', () => {
+            localStorage.setItem('tmux-selected-target', sessionSelect.value);
+            startCapture();
+        });
+
+        commandInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                e.stopPropagation();
+                sendCommand();
+                return false;
+            }
+        });
+
+        commandInput.addEventListener('keypress', (e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+                e.preventDefault();
+                return false;
+            }
+        });
+
+        // Load windows and focus input on load
+        loadWindows();
+        commandInput.focus();
+    </script>
+</body>
+</html>
