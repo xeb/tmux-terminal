@@ -149,6 +149,21 @@ async fn health() -> &'static str {
     "OK"
 }
 
+#[derive(Serialize)]
+struct ConfigResponse {
+    large_mode: bool,
+}
+
+async fn get_config() -> impl IntoResponse {
+    let hostname = hostname::get()
+        .map(|h| h.to_string_lossy().to_string())
+        .unwrap_or_default();
+
+    let large_mode = hostname == "marcker-mac.roam.internal";
+
+    (StatusCode::OK, Json(ConfigResponse { large_mode }))
+}
+
 #[tokio::main]
 async fn main() {
     let port = std::env::var("PORT").unwrap_or_else(|_| "5533".to_string());
@@ -161,6 +176,7 @@ async fn main() {
         .route("/api/send", post(send_to_tmux))
         .route("/api/windows", get(list_windows))
         .route("/api/capture", post(capture_pane))
+        .route("/api/config", get(get_config))
         .route("/health", get(health))
         .fallback_service(static_service)
         .layer(SetResponseHeaderLayer::overriding(

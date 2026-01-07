@@ -128,7 +128,7 @@
             background: transparent;
             color: var(--matrix-dim);
             font-family: 'IBM Plex Mono', monospace;
-            font-size: 6pt;
+            font-size: var(--output-font-size, 6pt);
             line-height: 1.2;
             padding: 2px 4px;
             white-space: pre-wrap;
@@ -149,10 +149,10 @@
 
         /* Input pane - top, fixed height */
         .input-frame {
-            flex: 0 0 36px !important;
-            height: 36px;
-            min-height: 36px;
-            max-height: 36px;
+            flex: 0 0 var(--input-height, 36px) !important;
+            height: var(--input-height, 36px);
+            min-height: var(--input-height, 36px);
+            max-height: var(--input-height, 36px);
         }
 
         .command-input {
@@ -162,7 +162,7 @@
             border: none;
             color: var(--matrix-green);
             font-family: 'IBM Plex Mono', monospace;
-            font-size: clamp(1rem, 4vw, 1.25rem);
+            font-size: var(--input-font-size, clamp(1rem, 4vw, 1.25rem));
             padding: 4px 6px;
             resize: none;
             outline: none;
@@ -393,6 +393,18 @@
     <div class="status" id="status"></div>
 
     <script>
+        // Fetch server config for hostname-specific styling
+        fetch('/api/config')
+            .then(r => r.json())
+            .then(config => {
+                if (config.large_mode) {
+                    document.documentElement.style.setProperty('--output-font-size', '10pt');
+                    document.documentElement.style.setProperty('--input-font-size', '14pt');
+                    document.documentElement.style.setProperty('--input-height', '84px');
+                }
+            })
+            .catch(() => {});
+
         const commandInput = document.getElementById('commandInput');
         const sessionSelect = document.getElementById('sessionSelect');
         const refreshBtn = document.getElementById('refreshBtn');
