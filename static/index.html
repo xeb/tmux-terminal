@@ -354,6 +354,120 @@
                 rgba(0, 0, 0, 0.4) 100%
             );
         }
+
+        /* Tmux Prefix Indicator */
+        .prefix-indicator {
+            position: fixed;
+            top: 0.5rem;
+            right: 0.5rem;
+            padding: 0.25rem 0.5rem;
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            color: var(--matrix-green);
+            font-size: 0.7rem;
+            font-weight: 700;
+            z-index: 1002;
+            opacity: 0;
+            transition: opacity 0.15s ease;
+            text-shadow: 0 0 10px var(--matrix-glow);
+            box-shadow: 0 0 10px var(--matrix-glow);
+        }
+
+        .prefix-indicator.active {
+            opacity: 1;
+        }
+
+        /* Window List Modal */
+        .modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.8);
+            z-index: 2000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .modal-overlay.show {
+            display: flex;
+        }
+
+        .window-modal {
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            box-shadow: 0 0 30px var(--matrix-glow);
+            min-width: 300px;
+            max-width: 80%;
+            max-height: 70%;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .modal-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--matrix-dim);
+            font-size: 0.8rem;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            color: var(--matrix-green);
+            text-shadow: 0 0 10px var(--matrix-glow);
+        }
+
+        .modal-hint {
+            padding: 0.5rem 1rem;
+            font-size: 0.65rem;
+            color: var(--matrix-dim);
+            border-bottom: 1px solid var(--matrix-dim);
+        }
+
+        .window-list {
+            overflow-y: auto;
+            max-height: 300px;
+        }
+
+        .window-item {
+            padding: 0.5rem 1rem;
+            cursor: pointer;
+            display: flex;
+            gap: 1rem;
+            align-items: center;
+            transition: background 0.1s ease;
+            border-left: 2px solid transparent;
+        }
+
+        .window-item:hover {
+            background: rgba(0, 255, 65, 0.1);
+        }
+
+        .window-item.selected {
+            background: rgba(0, 255, 65, 0.2);
+            border-left-color: var(--matrix-green);
+        }
+
+        .window-item.current {
+            color: var(--matrix-green);
+            text-shadow: 0 0 5px var(--matrix-glow);
+        }
+
+        .window-target {
+            font-weight: 700;
+            min-width: 80px;
+        }
+
+        .window-name {
+            color: var(--matrix-dim);
+            flex: 1;
+        }
+
+        .window-marker {
+            font-size: 0.7rem;
+            color: var(--matrix-green);
+        }
     </style>
 </head>
 <body>
@@ -392,6 +506,16 @@
 
     <div class="status" id="status"></div>
 
+    <div class="prefix-indicator" id="prefixIndicator">^B</div>
+
+    <div class="modal-overlay" id="windowModal">
+        <div class="window-modal">
+            <div class="modal-header">Choose Window</div>
+            <div class="modal-hint">↑/↓ navigate • Enter select • Esc cancel</div>
+            <div class="window-list" id="windowList"></div>
+        </div>
+    </div>
+
     <script>
         // Fetch server config for hostname-specific styling
         fetch('/api/config')
@@ -411,8 +535,16 @@
         const sendBtn = document.getElementById('sendBtn');
         const outputContent = document.getElementById('outputContent');
         const status = document.getElementById('status');
+        const prefixIndicator = document.getElementById('prefixIndicator');
+        const windowModal = document.getElementById('windowModal');
+        const windowList = document.getElementById('windowList');
 
         let captureInterval = null;
+        let isFirstCapture = true;
+        let prefixMode = false;
+        let prefixTimeout = null;
+        let modalSelectedIndex = 0;
+        let modalWindows = [];
 
         function showStatus(message, type = 'success') {
             status.textContent = message;
@@ -437,8 +569,12 @@
                 if (data.content) {
                     const wasAtBottom = outputContent.scrollHeight - outputContent.scrollTop <= outputContent.clientHeight + 50;
                     outputContent.textContent = data.content;
-                    if (wasAtBottom) {
-                        outputContent.scrollTop = outputContent.scrollHeight;
+                    if (wasAtBottom || isFirstCapture) {
+                        // Use requestAnimationFrame to ensure layout is complete before scrolling
+                        requestAnimationFrame(() => {
+                            outputContent.scrollTop = outputContent.scrollHeight;
+                        });
+                        isFirstCapture = false;
                     }
                 }
             } catch (err) {
@@ -533,6 +669,159 @@
             }
         }
 
+        // Prefix mode functions
+        function enterPrefixMode() {
+            prefixMode = true;
+            prefixIndicator.classList.add('active');
+            if (prefixTimeout) clearTimeout(prefixTimeout);
+            prefixTimeout = setTimeout(exitPrefixMode, 2000);
+        }
+
+        function exitPrefixMode() {
+            prefixMode = false;
+            prefixIndicator.classList.remove('active');
+            if (prefixTimeout) {
+                clearTimeout(prefixTimeout);
+                prefixTimeout = null;
+            }
+        }
+
+        // Window modal functions
+        function openWindowModal() {
+            modalWindows = Array.from(sessionSelect.options).map(opt => ({
+                target: opt.value,
+                name: opt.textContent,
+                current: opt.value === sessionSelect.value
+            })).filter(w => w.target);
+
+            if (modalWindows.length === 0) {
+                showStatus('NO WINDOWS AVAILABLE', 'error');
+                return;
+            }
+
+            modalSelectedIndex = modalWindows.findIndex(w => w.current);
+            if (modalSelectedIndex === -1) modalSelectedIndex = 0;
+
+            renderWindowList();
+            windowModal.classList.add('show');
+        }
+
+        function closeWindowModal() {
+            windowModal.classList.remove('show');
+            commandInput.focus();
+        }
+
+        function renderWindowList() {
+            windowList.innerHTML = modalWindows.map((win, i) => `
+                <div class="window-item ${i === modalSelectedIndex ? 'selected' : ''} ${win.current ? 'current' : ''}"
+                     data-index="${i}">
+                    <span class="window-target">${win.target}</span>
+                    <span class="window-name">${win.name.split(' - ')[1] || ''}</span>
+                    ${win.current ? '<span class="window-marker">(active)</span>' : ''}
+                </div>
+            `).join('');
+
+            // Add click handlers
+            windowList.querySelectorAll('.window-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const index = parseInt(item.dataset.index);
+                    selectWindow(index);
+                });
+            });
+
+            // Scroll selected into view
+            const selected = windowList.querySelector('.selected');
+            if (selected) selected.scrollIntoView({ block: 'nearest' });
+        }
+
+        function selectWindow(index) {
+            const win = modalWindows[index];
+            if (win) {
+                sessionSelect.value = win.target;
+                localStorage.setItem('tmux-selected-target', win.target);
+                startCapture();
+                showStatus(`SWITCHED TO ${win.target}`, 'success');
+            }
+            closeWindowModal();
+        }
+
+        function handleModalKeydown(e) {
+            if (!windowModal.classList.contains('show')) return false;
+
+            switch (e.key) {
+                case 'ArrowUp':
+                case 'k':
+                    e.preventDefault();
+                    modalSelectedIndex = Math.max(0, modalSelectedIndex - 1);
+                    renderWindowList();
+                    return true;
+                case 'ArrowDown':
+                case 'j':
+                    e.preventDefault();
+                    modalSelectedIndex = Math.min(modalWindows.length - 1, modalSelectedIndex + 1);
+                    renderWindowList();
+                    return true;
+                case 'Enter':
+                    e.preventDefault();
+                    selectWindow(modalSelectedIndex);
+                    return true;
+                case 'Escape':
+                case 'q':
+                    e.preventDefault();
+                    closeWindowModal();
+                    return true;
+            }
+            return false;
+        }
+
+        function handlePrefixCommand(key) {
+            exitPrefixMode();
+            switch (key.toLowerCase()) {
+                case 'w':
+                    openWindowModal();
+                    return true;
+                case 'n':
+                    // Next window
+                    if (sessionSelect.selectedIndex < sessionSelect.options.length - 1) {
+                        sessionSelect.selectedIndex++;
+                        localStorage.setItem('tmux-selected-target', sessionSelect.value);
+                        startCapture();
+                        showStatus('NEXT WINDOW', 'success');
+                    }
+                    return true;
+                case 'p':
+                    // Previous window
+                    if (sessionSelect.selectedIndex > 0) {
+                        sessionSelect.selectedIndex--;
+                        localStorage.setItem('tmux-selected-target', sessionSelect.value);
+                        startCapture();
+                        showStatus('PREV WINDOW', 'success');
+                    }
+                    return true;
+            }
+            return false;
+        }
+
+        // Global keyboard handler
+        document.addEventListener('keydown', (e) => {
+            // Handle modal keys first
+            if (handleModalKeydown(e)) return;
+
+            // Ctrl+B enters prefix mode
+            if (e.ctrlKey && e.key === 'b') {
+                e.preventDefault();
+                enterPrefixMode();
+                return;
+            }
+
+            // In prefix mode, handle command keys
+            if (prefixMode && !e.ctrlKey && !e.altKey && !e.metaKey) {
+                e.preventDefault();
+                handlePrefixCommand(e.key);
+                return;
+            }
+        });
+
         sendBtn.addEventListener('click', sendCommand);
         refreshBtn.addEventListener('click', loadWindows);
         sessionSelect.addEventListener('change', () => {
@@ -541,6 +830,9 @@
         });
 
         commandInput.addEventListener('keydown', (e) => {
+            // Don't handle Enter if modal is open or in prefix mode
+            if (windowModal.classList.contains('show') || prefixMode) return;
+
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 e.stopPropagation();
@@ -554,6 +846,11 @@
                 e.preventDefault();
                 return false;
             }
+        });
+
+        // Close modal on overlay click
+        windowModal.addEventListener('click', (e) => {
+            if (e.target === windowModal) closeWindowModal();
         });
 
         // Load windows and focus input on load
