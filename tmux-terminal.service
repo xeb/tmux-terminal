@@ -1,0 +1,14 @@
+[Unit]
+Description=TMUX Terminal Web Interface
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=%h/bin/tmux-terminal
+ExecStart=%h/bin/tmux-terminal/tmux-terminal
+Restart=on-failure
+RestartSec=5
+Environment=PORT=5533
+
+[Install]
+WantedBy=default.target

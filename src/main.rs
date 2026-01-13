@@ -149,6 +149,44 @@ async fn health() -> &'static str {
     "OK"
 }
 
+async fn new_window() -> impl IntoResponse {
+    // Create a new tmux window
+    let result = Command::new("tmux")
+        .args(["new-window", "-P", "-F", "#{session_name}:#{window_index}"])
+        .output();
+
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                let target = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                (
+                    StatusCode::OK,
+                    Json(serde_json::json!({
+                        "success": true,
+                        "target": target
+                    })),
+                )
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(serde_json::json!({
+                        "success": false,
+                        "error": stderr.to_string()
+                    })),
+                )
+            }
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false,
+                "error": format!("Failed to create window: {}", e)
+            })),
+        ),
+    }
+}
+
 #[derive(Serialize)]
 struct ConfigResponse {
     large_mode: bool,
@@ -177,6 +215,7 @@ async fn main() {
         .route("/api/windows", get(list_windows))
         .route("/api/capture", post(capture_pane))
         .route("/api/config", get(get_config))
+        .route("/api/new-window", post(new_window))
         .route("/health", get(health))
         .fallback_service(static_service)
         .layer(SetResponseHeaderLayer::overriding(

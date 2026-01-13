@@ -17,6 +17,15 @@
             --scanline-opacity: 0.03;
         }
 
+        /* Desktop layout - larger fonts and input */
+        @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+            :root {
+                --output-font-size: 10pt;
+                --input-font-size: 14pt;
+                --input-height: 84px;
+            }
+        }
+
         * {
             margin: 0;
             padding: 0;
@@ -360,7 +369,7 @@
             position: fixed;
             top: 0.5rem;
             right: 0.5rem;
-            padding: 0.25rem 0.5rem;
+            padding: 0.5rem 0.75rem;
             background: var(--terminal-bg);
             border: 1px solid var(--matrix-green);
             color: var(--matrix-green);
@@ -375,6 +384,79 @@
 
         .prefix-indicator.active {
             opacity: 1;
+        }
+
+        .prefix-title {
+            font-size: 0.8rem;
+            margin-bottom: 0.25rem;
+            border-bottom: 1px solid var(--matrix-dim);
+            padding-bottom: 0.25rem;
+        }
+
+        .prefix-hints {
+            display: flex;
+            flex-direction: column;
+            gap: 0.15rem;
+            font-size: 0.65rem;
+            font-weight: 400;
+            color: var(--matrix-dim);
+        }
+
+        .prefix-hints span {
+            display: flex;
+            gap: 0.5rem;
+        }
+
+        .prefix-hints kbd {
+            color: var(--matrix-green);
+            font-weight: 700;
+            min-width: 1rem;
+        }
+
+        /* Help Modal */
+        .help-modal {
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            box-shadow: 0 0 30px var(--matrix-glow);
+            min-width: 280px;
+            max-width: 90%;
+            padding: 1rem;
+        }
+
+        .help-modal h2 {
+            font-size: 0.9rem;
+            margin-bottom: 0.75rem;
+            border-bottom: 1px solid var(--matrix-dim);
+            padding-bottom: 0.5rem;
+            letter-spacing: 0.1em;
+        }
+
+        .help-section {
+            margin-bottom: 1rem;
+        }
+
+        .help-section h3 {
+            font-size: 0.75rem;
+            color: var(--matrix-dim);
+            margin-bottom: 0.5rem;
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .help-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 0.25rem 0;
+            font-size: 0.75rem;
+        }
+
+        .help-row kbd {
+            color: var(--matrix-green);
+            font-weight: 700;
+        }
+
+        .help-row span {
+            color: var(--matrix-dim);
         }
 
         /* Window List Modal */
@@ -492,6 +574,7 @@
                 autocorrect="off"
                 autocapitalize="off"
                 spellcheck="false"
+                autofocus
             ></textarea>
         </div>
 
@@ -506,12 +589,40 @@
 
     <div class="status" id="status"></div>
 
-    <div class="prefix-indicator" id="prefixIndicator">^B</div>
+    <div class="prefix-indicator" id="prefixIndicator">
+        <div class="prefix-title">^B PREFIX</div>
+        <div class="prefix-hints">
+            <span><kbd>c</kbd> new window</span>
+            <span><kbd>w</kbd> window list</span>
+            <span><kbd>n</kbd> next window</span>
+            <span><kbd>p</kbd> prev window</span>
+            <span><kbd>?</kbd> help</span>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="helpModal">
+        <div class="help-modal">
+            <h2>KEYBOARD SHORTCUTS</h2>
+            <div class="help-section">
+                <h3>Prefix Commands (^B first)</h3>
+                <div class="help-row"><kbd>^B c</kbd> <span>Create new window</span></div>
+                <div class="help-row"><kbd>^B w</kbd> <span>Window list</span></div>
+                <div class="help-row"><kbd>^B n</kbd> <span>Next window</span></div>
+                <div class="help-row"><kbd>^B p</kbd> <span>Previous window</span></div>
+                <div class="help-row"><kbd>^B ?</kbd> <span>This help</span></div>
+            </div>
+            <div class="help-section">
+                <h3>General</h3>
+                <div class="help-row"><kbd>Enter</kbd> <span>Execute command</span></div>
+                <div class="help-row"><kbd>Esc</kbd> <span>Close modal</span></div>
+            </div>
+        </div>
+    </div>
 
     <div class="modal-overlay" id="windowModal">
         <div class="window-modal">
-            <div class="modal-header">Choose Window</div>
-            <div class="modal-hint">↑/↓ navigate • Enter select • Esc cancel</div>
+            <div class="modal-header">Choose Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B w</span></div>
+            <div class="modal-hint">↑/↓/j/k navigate • Enter select • Esc/q cancel • ^B c new</div>
             <div class="window-list" id="windowList"></div>
         </div>
     </div>
@@ -538,6 +649,7 @@
         const prefixIndicator = document.getElementById('prefixIndicator');
         const windowModal = document.getElementById('windowModal');
         const windowList = document.getElementById('windowList');
+        const helpModal = document.getElementById('helpModal');
 
         let captureInterval = null;
         let isFirstCapture = true;
@@ -711,6 +823,15 @@
             commandInput.focus();
         }
 
+        function openHelpModal() {
+            helpModal.classList.add('show');
+        }
+
+        function closeHelpModal() {
+            helpModal.classList.remove('show');
+            commandInput.focus();
+        }
+
         function renderWindowList() {
             windowList.innerHTML = modalWindows.map((win, i) => `
                 <div class="window-item ${i === modalSelectedIndex ? 'selected' : ''} ${win.current ? 'current' : ''}"
@@ -746,6 +867,16 @@
         }
 
         function handleModalKeydown(e) {
+            // Handle help modal
+            if (helpModal.classList.contains('show')) {
+                if (e.key === 'Escape' || e.key === 'q' || e.key === '?') {
+                    e.preventDefault();
+                    closeHelpModal();
+                    return true;
+                }
+                return false;
+            }
+
             if (!windowModal.classList.contains('show')) return false;
 
             switch (e.key) {
@@ -774,9 +905,32 @@
             return false;
         }
 
+        async function createNewWindow() {
+            try {
+                const response = await fetch('/api/new-window', { method: 'POST' });
+                const data = await response.json();
+                if (data.success && data.target) {
+                    await loadWindows();
+                    sessionSelect.value = data.target;
+                    localStorage.setItem('tmux-selected-target', data.target);
+                    startCapture();
+                    showStatus('NEW WINDOW: ' + data.target, 'success');
+                    setTimeout(() => commandInput.focus(), 150);
+                } else {
+                    showStatus(data.error || 'FAILED TO CREATE WINDOW', 'error');
+                }
+            } catch (err) {
+                showStatus('CONNECTION ERROR', 'error');
+            }
+        }
+
         function handlePrefixCommand(key) {
             exitPrefixMode();
-            switch (key.toLowerCase()) {
+            switch (key) {
+                case 'c':
+                    // Create new window
+                    createNewWindow();
+                    return true;
                 case 'w':
                     openWindowModal();
                     return true;
@@ -797,6 +951,9 @@
                         startCapture();
                         showStatus('PREV WINDOW', 'success');
                     }
+                    return true;
+                case '?':
+                    openHelpModal();
                     return true;
             }
             return false;
@@ -827,6 +984,7 @@
         sessionSelect.addEventListener('change', () => {
             localStorage.setItem('tmux-selected-target', sessionSelect.value);
             startCapture();
+            setTimeout(() => commandInput.focus(), 500);
         });
 
         commandInput.addEventListener('keydown', (e) => {
@@ -848,9 +1006,12 @@
             }
         });
 
-        // Close modal on overlay click
+        // Close modals on overlay click
         windowModal.addEventListener('click', (e) => {
             if (e.target === windowModal) closeWindowModal();
+        });
+        helpModal.addEventListener('click', (e) => {
+            if (e.target === helpModal) closeHelpModal();
         });
 
         // Load windows and focus input on load
