@@ -2,10 +2,13 @@ PREFIX = $(HOME)/bin/tmux-terminal
 SERVICE_DIR = $(HOME)/.config/systemd/user
 SERVICE_NAME = tmux-terminal.service
 
-.PHONY: build install uninstall update start stop restart status
+.PHONY: build run install uninstall update start stop restart status
 
 build:
 	cargo build --release
+
+run: build
+	./target/release/tmux-terminal
 
 install: build
 	@echo "Installing tmux-terminal..."
