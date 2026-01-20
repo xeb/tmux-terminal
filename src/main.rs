@@ -149,6 +149,55 @@ async fn health() -> &'static str {
     "OK"
 }
 
+#[derive(Deserialize)]
+struct SendKeyRequest {
+    key: String,
+    session: String,
+}
+
+async fn send_key(Json(payload): Json<SendKeyRequest>) -> impl IntoResponse {
+    let session = if payload.session.is_empty() {
+        "0".to_string()
+    } else {
+        payload.session
+    };
+
+    // Send the key as a tmux key sequence (not literal, no Enter)
+    let result = Command::new("tmux")
+        .args(["send-keys", "-t", &session, &payload.key])
+        .output();
+
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                (
+                    StatusCode::OK,
+                    Json(ApiResponse {
+                        success: true,
+                        error: None,
+                    }),
+                )
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse {
+                        success: false,
+                        error: Some(stderr.to_string()),
+                    }),
+                )
+            }
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse {
+                success: false,
+                error: Some(format!("Failed to send key: {}", e)),
+            }),
+        ),
+    }
+}
+
 async fn new_window() -> impl IntoResponse {
     // Create a new tmux window
     let result = Command::new("tmux")
@@ -212,6 +261,7 @@ async fn main() {
 
     let app = Router::new()
         .route("/api/send", post(send_to_tmux))
+        .route("/api/send-key", post(send_key))
         .route("/api/windows", get(list_windows))
         .route("/api/capture", post(capture_pane))
         .route("/api/config", get(get_config))
