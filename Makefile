@@ -33,9 +33,10 @@ update:
 	@echo "Updating tmux-terminal..."
 	git pull
 	cargo build --release
+	systemctl --user stop $(SERVICE_NAME)
 	cp target/release/tmux-terminal $(PREFIX)/
 	cp -r static $(PREFIX)/
-	systemctl --user restart $(SERVICE_NAME)
+	systemctl --user start $(SERVICE_NAME)
 	@echo "Updated and restarted tmux-terminal"
 
 start:
