@@ -622,7 +622,7 @@
     <div class="modal-overlay" id="windowModal">
         <div class="window-modal">
             <div class="modal-header">Choose Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B w</span></div>
-            <div class="modal-hint">↑/↓/j/k navigate • Enter select • Esc/q cancel • ^B c new</div>
+            <div class="modal-hint">↑/↓/j/k navigate • PgUp/PgDn/Home/End jump • Enter select • Esc/q cancel</div>
             <div class="window-list" id="windowList"></div>
         </div>
     </div>
@@ -890,6 +890,26 @@
                 case 'j':
                     e.preventDefault();
                     modalSelectedIndex = Math.min(modalWindows.length - 1, modalSelectedIndex + 1);
+                    renderWindowList();
+                    return true;
+                case 'PageUp':
+                    e.preventDefault();
+                    modalSelectedIndex = Math.max(0, modalSelectedIndex - 10);
+                    renderWindowList();
+                    return true;
+                case 'PageDown':
+                    e.preventDefault();
+                    modalSelectedIndex = Math.min(modalWindows.length - 1, modalSelectedIndex + 10);
+                    renderWindowList();
+                    return true;
+                case 'Home':
+                    e.preventDefault();
+                    modalSelectedIndex = 0;
+                    renderWindowList();
+                    return true;
+                case 'End':
+                    e.preventDefault();
+                    modalSelectedIndex = modalWindows.length - 1;
                     renderWindowList();
                     return true;
                 case 'Enter':
