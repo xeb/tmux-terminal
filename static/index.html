@@ -690,6 +690,14 @@
             }, 2000);
         }
 
+        function hasSelectionInOutput() {
+            const selection = window.getSelection();
+            if (!selection || selection.isCollapsed) return false;
+            // Check if selection is within the output element
+            const range = selection.getRangeAt(0);
+            return outputContent.contains(range.commonAncestorContainer);
+        }
+
         async function captureOutput() {
             const target = sessionSelect.value;
             if (!target) return;
@@ -703,6 +711,10 @@
                 const data = await response.json();
 
                 if (data.content) {
+                    // Skip update if content unchanged or user is selecting text
+                    if (data.content === outputContent.textContent) return;
+                    if (hasSelectionInOutput()) return;
+
                     const wasAtBottom = outputContent.scrollHeight - outputContent.scrollTop <= outputContent.clientHeight + 50;
                     outputContent.textContent = data.content;
                     if (wasAtBottom || isFirstCapture) {
@@ -1005,10 +1017,39 @@
             return false;
         }
 
+        async function sendKeyToTmux(key) {
+            const session = sessionSelect.value || '0';
+            try {
+                const response = await fetch('/api/send-key', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ key, session }),
+                });
+                const data = await response.json();
+                if (response.ok) {
+                    showStatus(`SENT ${key}`, 'success');
+                    setTimeout(captureOutput, 100);
+                }
+            } catch (err) {
+                showStatus('CONNECTION ERROR', 'error');
+            }
+        }
+
         // Global keyboard handler
         document.addEventListener('keydown', (e) => {
             // Handle modal keys first
             if (handleModalKeydown(e)) return;
+
+            // Ctrl+C sends interrupt to tmux (if no text selection)
+            if (e.ctrlKey && e.key === 'c') {
+                const selection = window.getSelection();
+                if (!selection || selection.isCollapsed || selection.toString().length === 0) {
+                    e.preventDefault();
+                    sendKeyToTmux('C-c');
+                    return;
+                }
+                // Otherwise let browser handle copy
+            }
 
             // Ctrl+B enters prefix mode
             if (e.ctrlKey && e.key === 'b') {
