@@ -9,12 +9,12 @@
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
     <style>
         :root {
-            --void: #050505;
-            --terminal-bg: #0a0a0a;
-            --matrix-green: #00ff41;
-            --matrix-dim: #00aa2a;
-            --matrix-glow: #00ff4180;
-            --scanline-opacity: 0.03;
+            --void: #ffffff;
+            --terminal-bg: #f8f8f8;
+            --matrix-green: #000000;
+            --matrix-dim: #444444;
+            --matrix-glow: #00000020;
+            --scanline-opacity: 0;
         }
 
         /* Desktop layout - larger fonts and input */
@@ -22,7 +22,7 @@
             :root {
                 --output-font-size: 10pt;
                 --input-font-size: 14pt;
-                --input-height: 84px;
+                --input-height: 5.5em;
             }
         }
 
@@ -96,10 +96,10 @@
         .terminal-frame::before {
             content: '';
             position: absolute;
-            top: -1px;
-            left: -1px;
-            right: -1px;
-            bottom: -1px;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
             border: 1px solid var(--matrix-green);
             opacity: 0.3;
             pointer-events: none;
@@ -152,16 +152,30 @@
             background: var(--terminal-bg);
         }
 
+        .output-content a.terminal-link {
+            color: inherit;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+            cursor: pointer;
+            border-radius: 1px;
+        }
+
+        .output-content a.terminal-link:hover {
+            background: var(--matrix-dim);
+            color: var(--terminal-bg);
+            text-decoration: none;
+        }
+
         .output-content::-webkit-scrollbar-thumb {
             background: var(--matrix-dim);
         }
 
         /* Input pane - top, fixed height */
         .input-frame {
-            flex: 0 0 var(--input-height, 36px) !important;
-            height: var(--input-height, 36px);
-            min-height: var(--input-height, 36px);
-            max-height: var(--input-height, 36px);
+            flex: 0 0 var(--input-height, 5.5em) !important;
+            height: var(--input-height, 5.5em);
+            min-height: var(--input-height, 5.5em);
+            max-height: var(--input-height, 5.5em);
         }
 
         .command-input {
@@ -177,6 +191,9 @@
             outline: none;
             caret-color: var(--matrix-green);
             line-height: 1.4;
+            -webkit-appearance: none;
+            appearance: none;
+            box-sizing: border-box;
         }
 
         .command-input::placeholder {
@@ -185,8 +202,8 @@
         }
 
         .command-input::selection {
-            background: var(--matrix-green);
-            color: var(--void);
+            background: #0066cc;
+            color: #ffffff;
         }
 
         /* Session Input */
@@ -237,6 +254,11 @@
             padding: 0.5rem;
         }
 
+        @keyframes refresh-spin {
+            0%   { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
         .refresh-btn {
             background: transparent;
             border: 1px solid var(--matrix-dim);
@@ -245,7 +267,11 @@
             font-size: 0.65rem;
             padding: 4px 8px;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.1s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            letter-spacing: 0.05em;
         }
 
         .refresh-btn:hover {
@@ -253,9 +279,67 @@
             color: var(--matrix-green);
         }
 
+        .refresh-btn:active {
+            transform: scale(0.93);
+            background: var(--matrix-green);
+            color: var(--void);
+            border-color: var(--matrix-green);
+        }
+
+        .refresh-btn .refresh-icon {
+            display: inline-block;
+            font-style: normal;
+            line-height: 1;
+        }
+
         .refresh-btn.loading {
-            opacity: 0.5;
             pointer-events: none;
+            border-color: var(--matrix-green);
+            color: var(--matrix-green);
+        }
+
+        .refresh-btn.loading .refresh-icon {
+            animation: refresh-spin 0.6s linear infinite;
+        }
+
+        /* Rename Modal */
+        .rename-modal {
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            min-width: 300px;
+            max-width: 80%;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .rename-modal .modal-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--matrix-dim);
+        }
+
+        .rename-input {
+            width: 100%;
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid var(--matrix-dim);
+            color: var(--matrix-green);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.9rem;
+            padding: 0.75rem 1rem;
+            outline: none;
+            caret-color: var(--matrix-green);
+        }
+
+        .rename-input:focus {
+            border-bottom-color: var(--matrix-green);
+        }
+
+        .rename-hint {
+            padding: 0.5rem 1rem;
+            font-size: 0.65rem;
+            color: var(--matrix-dim);
         }
 
         /* Send Button */
@@ -300,11 +384,8 @@
 
         .send-btn:hover,
         .send-btn:active {
-            background: rgba(0, 255, 65, 0.1);
-            box-shadow:
-                0 0 20px var(--matrix-glow),
-                inset 0 0 20px rgba(0, 255, 65, 0.1);
-            text-shadow: 0 0 10px var(--matrix-green);
+            background: rgba(0, 0, 0, 0.05);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
 
         .send-btn:active {
@@ -344,7 +425,6 @@
         .status.success {
             border-color: var(--matrix-green);
             color: var(--matrix-green);
-            text-shadow: 0 0 10px var(--matrix-glow);
         }
 
         /* Vignette */
@@ -377,13 +457,14 @@
             font-weight: 700;
             z-index: 1002;
             opacity: 0;
+            pointer-events: none;
             transition: opacity 0.15s ease;
-            text-shadow: 0 0 10px var(--matrix-glow);
-            box-shadow: 0 0 10px var(--matrix-glow);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
 
         .prefix-indicator.active {
             opacity: 1;
+            pointer-events: auto;
         }
 
         .prefix-title {
@@ -417,7 +498,7 @@
         .help-modal {
             background: var(--terminal-bg);
             border: 1px solid var(--matrix-green);
-            box-shadow: 0 0 30px var(--matrix-glow);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
             min-width: 280px;
             max-width: 90%;
             padding: 1rem;
@@ -480,7 +561,7 @@
         .window-modal {
             background: var(--terminal-bg);
             border: 1px solid var(--matrix-green);
-            box-shadow: 0 0 30px var(--matrix-glow);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
             min-width: 300px;
             max-width: 80%;
             max-height: 70%;
@@ -497,7 +578,6 @@
             letter-spacing: 0.1em;
             text-transform: uppercase;
             color: var(--matrix-green);
-            text-shadow: 0 0 10px var(--matrix-glow);
         }
 
         .modal-hint {
@@ -523,17 +603,17 @@
         }
 
         .window-item:hover {
-            background: rgba(0, 255, 65, 0.1);
+            background: rgba(0, 0, 0, 0.05);
         }
 
         .window-item.selected {
-            background: rgba(0, 255, 65, 0.2);
+            background: rgba(0, 0, 0, 0.1);
             border-left-color: var(--matrix-green);
         }
 
         .window-item.current {
             color: var(--matrix-green);
-            text-shadow: 0 0 5px var(--matrix-glow);
+            font-weight: 700;
         }
 
         .window-target {
@@ -550,19 +630,17 @@
             font-size: 0.7rem;
             color: var(--matrix-green);
         }
+
     </style>
 </head>
 <body>
-    <div class="scanlines"></div>
-    <div class="vignette"></div>
-
     <main class="terminal-container">
         <div class="session-bar">
             <span class="session-label">TARGET:</span>
             <select class="session-select" id="sessionSelect">
                 <option value="">Loading...</option>
             </select>
-            <button class="refresh-btn" id="refreshBtn">REFRESH</button>
+            <button class="refresh-btn" id="refreshBtn"><i class="refresh-icon">⟳</i> REFRESH</button>
         </div>
 
         <div class="terminal-frame input-frame">
@@ -585,6 +663,7 @@
         <div class="terminal-frame output-frame">
             <div class="output-content" id="outputContent">Connecting...</div>
         </div>
+
     </main>
 
     <div class="status" id="status"></div>
@@ -593,9 +672,11 @@
         <div class="prefix-title">^B PREFIX</div>
         <div class="prefix-hints">
             <span><kbd>c</kbd> new window</span>
+            <span><kbd>,</kbd> rename window</span>
             <span><kbd>w</kbd> window list</span>
             <span><kbd>n</kbd> next window</span>
             <span><kbd>p</kbd> prev window</span>
+            <span><kbd>r</kbd> refresh</span>
             <span><kbd>?</kbd> help</span>
         </div>
     </div>
@@ -606,13 +687,16 @@
             <div class="help-section">
                 <h3>Prefix Commands (^B first)</h3>
                 <div class="help-row"><kbd>^B c</kbd> <span>Create new window</span></div>
+                <div class="help-row"><kbd>^B ,</kbd> <span>Rename window</span></div>
                 <div class="help-row"><kbd>^B w</kbd> <span>Window list</span></div>
                 <div class="help-row"><kbd>^B n</kbd> <span>Next window</span></div>
                 <div class="help-row"><kbd>^B p</kbd> <span>Previous window</span></div>
+                <div class="help-row"><kbd>^B r</kbd> <span>Refresh window list</span></div>
                 <div class="help-row"><kbd>^B ?</kbd> <span>This help</span></div>
             </div>
             <div class="help-section">
                 <h3>General</h3>
+                <div class="help-row"><kbd>Ctrl+R</kbd> <span>Refresh windows</span></div>
                 <div class="help-row"><kbd>Enter</kbd> <span>Execute command</span></div>
                 <div class="help-row"><kbd>Esc</kbd> <span>Close modal</span></div>
             </div>
@@ -622,10 +706,36 @@
     <div class="modal-overlay" id="windowModal">
         <div class="window-modal">
             <div class="modal-header">Choose Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B w</span></div>
-            <div class="modal-hint">↑/↓/j/k navigate • PgUp/PgDn/Home/End jump • Enter select • Esc/q cancel</div>
+            <div class="modal-hint">↑/↓ navigate • j/k reorder • PgUp/PgDn/Home/End jump • Enter select • Esc/q cancel</div>
             <div class="window-list" id="windowList"></div>
         </div>
     </div>
+
+    <div class="modal-overlay" id="renameModal">
+        <div class="rename-modal">
+            <div class="modal-header">Rename Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B ,</span></div>
+            <input type="text" class="rename-input" id="renameInput" placeholder="New window name..." autocomplete="off" spellcheck="false">
+            <div class="rename-hint">Enter to confirm • Esc to cancel</div>
+        </div>
+    </div>
+
+    <script>
+        // Linkify terminal output: escape HTML, then wrap URLs in <a> tags
+        function linkifyTerminalOutput(text) {
+            // Escape HTML special chars to prevent XSS
+            const escaped = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+
+            // Match http/https URLs - stop at whitespace or common trailing punctuation
+            return escaped.replace(
+                /(https?:\/\/[^\s&"<>)\]]+)/g,
+                '<a class="terminal-link" href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+            );
+        }
+    </script>
 
     <script>
         // Fetch server config for hostname-specific styling
@@ -650,6 +760,8 @@
         const windowModal = document.getElementById('windowModal');
         const windowList = document.getElementById('windowList');
         const helpModal = document.getElementById('helpModal');
+        const renameModal = document.getElementById('renameModal');
+        const renameInput = document.getElementById('renameInput');
 
         let captureInterval = null;
         let isFirstCapture = true;
@@ -710,13 +822,18 @@
                 });
                 const data = await response.json();
 
+                if (data.window_closed) {
+                    loadWindows();
+                    return;
+                }
+
                 if (data.content) {
                     // Skip update if content unchanged or user is selecting text
                     if (data.content === outputContent.textContent) return;
                     if (hasSelectionInOutput()) return;
 
                     const wasAtBottom = outputContent.scrollHeight - outputContent.scrollTop <= outputContent.clientHeight + 50;
-                    outputContent.textContent = data.content;
+                    outputContent.innerHTML = linkifyTerminalOutput(data.content);
                     if (wasAtBottom || isFirstCapture) {
                         // Use requestAnimationFrame to ensure layout is complete before scrolling
                         requestAnimationFrame(() => {
@@ -738,10 +855,12 @@
 
         async function loadWindows() {
             refreshBtn.classList.add('loading');
-            refreshBtn.textContent = '...';
 
             try {
-                const response = await fetch('/api/windows');
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 5000);
+                const response = await fetch('/api/windows', { signal: controller.signal });
+                clearTimeout(timeout);
                 const windows = await response.json();
 
                 sessionSelect.innerHTML = '';
@@ -773,13 +892,13 @@
                     }
 
                     startCapture();
+                    showStatus(`${windows.length} WINDOWS`, 'success');
                 }
             } catch (err) {
                 sessionSelect.innerHTML = '<option value="0">0 (default)</option>';
                 showStatus('FAILED TO LOAD WINDOWS', 'error');
             } finally {
                 refreshBtn.classList.remove('loading');
-                refreshBtn.textContent = 'REFRESH';
             }
         }
 
@@ -870,6 +989,51 @@
             commandInput.focus();
         }
 
+        function openRenameModal() {
+            const target = sessionSelect.value;
+            if (!target) {
+                showStatus('NO WINDOW SELECTED', 'error');
+                return;
+            }
+            // Pre-fill with current window name
+            const currentOption = sessionSelect.options[sessionSelect.selectedIndex];
+            const currentName = currentOption ? (currentOption.textContent.split(' - ')[1] || '') : '';
+            renameInput.value = currentName;
+            renameModal.classList.add('show');
+            setTimeout(() => {
+                renameInput.focus();
+                renameInput.select();
+            }, 50);
+        }
+
+        function closeRenameModal() {
+            renameModal.classList.remove('show');
+            commandInput.focus();
+        }
+
+        async function renameCurrentWindow(newName) {
+            const target = sessionSelect.value;
+            if (!target || !newName.trim()) return;
+
+            try {
+                const response = await fetch('/api/rename-window', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target, name: newName.trim() }),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showStatus('RENAMED: ' + newName.trim(), 'success');
+                    await loadWindows();
+                } else {
+                    showStatus(data.error || 'RENAME FAILED', 'error');
+                }
+            } catch (err) {
+                showStatus('CONNECTION ERROR', 'error');
+            }
+        }
+
+
         function renderWindowList() {
             windowList.innerHTML = modalWindows.map((win, i) => `
                 <div class="window-item ${i === modalSelectedIndex ? 'selected' : ''} ${win.current ? 'current' : ''}"
@@ -904,7 +1068,60 @@
             closeWindowModal();
         }
 
+        async function reorderWindow(fromIdx, toIdx) {
+            const fromWin = modalWindows[fromIdx];
+            const toWin = modalWindows[toIdx];
+            if (!fromWin || !toWin) return;
+
+            // Extract session name from target (e.g. "main:3" -> "main")
+            const session = fromWin.target.split(':')[0];
+            const fromWindowIndex = parseInt(fromWin.target.split(':')[1]);
+            const toWindowIndex = parseInt(toWin.target.split(':')[1]);
+
+            try {
+                const response = await fetch('/api/move-window', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session, from_index: fromWindowIndex, to_index: toWindowIndex }),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    // Swap in local array and update targets
+                    const tmpTarget = fromWin.target;
+                    fromWin.target = toWin.target;
+                    toWin.target = tmpTarget;
+                    modalWindows[fromIdx] = toWin;
+                    modalWindows[toIdx] = fromWin;
+                    modalSelectedIndex = toIdx;
+                    renderWindowList();
+                    // Refresh the dropdown too
+                    await loadWindows();
+                } else {
+                    showStatus(data.error || 'MOVE FAILED', 'error');
+                }
+            } catch (err) {
+                showStatus('CONNECTION ERROR', 'error');
+            }
+        }
+
         function handleModalKeydown(e) {
+            // Handle rename modal
+            if (renameModal.classList.contains('show')) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeRenameModal();
+                    return true;
+                }
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const newName = renameInput.value;
+                    closeRenameModal();
+                    renameCurrentWindow(newName);
+                    return true;
+                }
+                return true; // consume all keys while rename modal is open
+            }
+
             // Handle help modal
             if (helpModal.classList.contains('show')) {
                 if (e.key === 'Escape' || e.key === 'q' || e.key === '?') {
@@ -919,16 +1136,26 @@
 
             switch (e.key) {
                 case 'ArrowUp':
-                case 'k':
                     e.preventDefault();
                     modalSelectedIndex = Math.max(0, modalSelectedIndex - 1);
                     renderWindowList();
                     return true;
                 case 'ArrowDown':
-                case 'j':
                     e.preventDefault();
                     modalSelectedIndex = Math.min(modalWindows.length - 1, modalSelectedIndex + 1);
                     renderWindowList();
+                    return true;
+                case 'k':
+                    e.preventDefault();
+                    if (modalSelectedIndex > 0) {
+                        reorderWindow(modalSelectedIndex, modalSelectedIndex - 1);
+                    }
+                    return true;
+                case 'j':
+                    e.preventDefault();
+                    if (modalSelectedIndex < modalWindows.length - 1) {
+                        reorderWindow(modalSelectedIndex, modalSelectedIndex + 1);
+                    }
                     return true;
                 case 'PageUp':
                     e.preventDefault();
@@ -989,6 +1216,10 @@
                     // Create new window
                     createNewWindow();
                     return true;
+                case ',':
+                    // Rename window
+                    openRenameModal();
+                    return true;
                 case 'w':
                     openWindowModal();
                     return true;
@@ -1009,6 +1240,11 @@
                         startCapture();
                         showStatus('PREV WINDOW', 'success');
                     }
+                    return true;
+                case 'r':
+                    // Refresh window list
+                    loadWindows();
+                    showStatus('REFRESHING...', 'success');
                     return true;
                 case '?':
                     openHelpModal();
@@ -1039,6 +1275,13 @@
         document.addEventListener('keydown', (e) => {
             // Handle modal keys first
             if (handleModalKeydown(e)) return;
+
+            // Ctrl+R refreshes windows
+            if (e.ctrlKey && e.key === 'r') {
+                e.preventDefault();
+                loadWindows();
+                return;
+            }
 
             // Ctrl+C sends interrupt to tmux (if no text selection)
             if (e.ctrlKey && e.key === 'c') {
@@ -1129,6 +1372,9 @@
         });
         helpModal.addEventListener('click', (e) => {
             if (e.target === helpModal) closeHelpModal();
+        });
+        renameModal.addEventListener('click', (e) => {
+            if (e.target === renameModal) closeRenameModal();
         });
 
         // Load windows and focus input on load

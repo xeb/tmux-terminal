@@ -13,6 +13,7 @@ install: build
 	mkdir -p $(SERVICE_DIR)
 	cp target/release/tmux-terminal $(PREFIX)/
 	cp -r static $(PREFIX)/
+	cp -r scripts $(PREFIX)/
 	cp tmux-terminal.service $(SERVICE_DIR)/
 	systemctl --user daemon-reload
 	systemctl --user enable $(SERVICE_NAME)
@@ -36,6 +37,7 @@ update:
 	systemctl --user stop $(SERVICE_NAME)
 	cp target/release/tmux-terminal $(PREFIX)/
 	cp -r static $(PREFIX)/
+	cp -r scripts $(PREFIX)/
 	systemctl --user start $(SERVICE_NAME)
 	@echo "Updated and restarted tmux-terminal"
 
