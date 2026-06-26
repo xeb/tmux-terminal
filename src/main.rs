@@ -1,5 +1,6 @@
 use axum::{
-    extract::{Json, State},
+    body::Bytes,
+    extract::{DefaultBodyLimit, Json, State},
     http::{header, StatusCode},
     response::IntoResponse,
     routing::{get, post},
@@ -58,7 +59,7 @@ async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse 
 
     // Capture the pane content with history
     let result = Command::new("tmux")
-        .args(["capture-pane", "-p", "-t", &target, "-S", "-100"])
+        .args(["capture-pane", "-p", "-t", &target, "-S", "-1000"])
         .output();
 
     match result {
@@ -120,44 +121,154 @@ async fn send_to_tmux(Json(payload): Json<SendCommand>) -> impl IntoResponse {
         .args(["send-keys", "-t", &session, "-l", &command])
         .output();
 
-    // Send Enter key
-    let result = Command::new("tmux")
-        .args(["send-keys", "-t", &session, "Enter"])
-        .output();
-
-    match result {
-        Ok(output) => {
-            if output.status.success() {
-                (
-                    StatusCode::OK,
-                    Json(ApiResponse {
-                        success: true,
-                        error: None,
-                    }),
-                )
-            } else {
-                let stderr = String::from_utf8_lossy(&output.stderr);
-                (
-                    StatusCode::BAD_REQUEST,
-                    Json(ApiResponse {
-                        success: false,
-                        error: Some(stderr.to_string()),
-                    }),
-                )
-            }
+    // Send Enter key 3 times with 500ms delay
+    for i in 0..3 {
+        if i > 0 {
+            std::thread::sleep(std::time::Duration::from_millis(500));
         }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(ApiResponse {
-                success: false,
-                error: Some(format!("Failed to execute tmux: {}", e)),
-            }),
-        ),
+        let _ = Command::new("tmux")
+            .args(["send-keys", "-t", &session, "Enter"])
+            .output();
     }
+
+    (
+        StatusCode::OK,
+        Json(ApiResponse {
+            success: true,
+            error: None,
+        }),
+    )
 }
 
 async fn health() -> &'static str {
     "OK"
+}
+
+#[derive(Deserialize)]
+struct ServeImageQuery {
+    path: String,
+}
+
+async fn serve_image(
+    axum::extract::Query(query): axum::extract::Query<ServeImageQuery>,
+) -> impl IntoResponse {
+    let path = std::path::Path::new(&query.path);
+
+    // Canonicalize to prevent directory traversal
+    let canonical = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "text/plain")],
+                axum::body::Body::from("File not found"),
+            );
+        }
+    };
+
+    // Verify it's a file with an image extension
+    let ext = canonical
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    let content_type = match ext.as_str() {
+        "jpg" | "jpeg" => "image/jpeg",
+        "png" => "image/png",
+        "gif" => "image/gif",
+        "webp" => "image/webp",
+        "bmp" => "image/bmp",
+        "svg" => "image/svg+xml",
+        "tiff" | "tif" => "image/tiff",
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "text/plain")],
+                axum::body::Body::from("Not a supported image type"),
+            );
+        }
+    };
+
+    match tokio::fs::read(&canonical).await {
+        Ok(bytes) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, content_type)],
+            axum::body::Body::from(bytes),
+        ),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain")],
+            axum::body::Body::from("Failed to read file"),
+        ),
+    }
+}
+
+async fn serve_file(
+    axum::extract::Query(query): axum::extract::Query<ServeImageQuery>,
+) -> impl IntoResponse {
+    let path = std::path::Path::new(&query.path);
+
+    let canonical = match path.canonicalize() {
+        Ok(p) => p,
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                "File not found".to_string(),
+            );
+        }
+    };
+
+    let ext = canonical
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_lowercase();
+
+    // Only allow known text file types
+    match ext.as_str() {
+        "json" | "txt" | "log" | "csv" | "xml" | "yaml" | "yml" | "toml" | "md" | "ini" | "cfg" => {}
+        _ => {
+            return (
+                StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                "Not a supported text file type".to_string(),
+            );
+        }
+    }
+
+    // Cap at 5MB to avoid loading huge files
+    match tokio::fs::metadata(&canonical).await {
+        Ok(meta) if meta.len() > 5 * 1024 * 1024 => {
+            return (
+                StatusCode::BAD_REQUEST,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                "File too large (>5MB)".to_string(),
+            );
+        }
+        Err(_) => {
+            return (
+                StatusCode::NOT_FOUND,
+                [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+                "File not found".to_string(),
+            );
+        }
+        _ => {}
+    }
+
+    match tokio::fs::read_to_string(&canonical).await {
+        Ok(content) => (
+            StatusCode::OK,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            content,
+        ),
+        Err(_) => (
+            StatusCode::NOT_FOUND,
+            [(header::CONTENT_TYPE, "text/plain; charset=utf-8")],
+            "Failed to read file".to_string(),
+        ),
+    }
 }
 
 async fn serve_voice() -> impl IntoResponse {
@@ -1046,6 +1157,126 @@ async fn notify_handler(Json(payload): Json<NotifyRequest>) -> impl IntoResponse
     (StatusCode::OK, Json(serde_json::json!({"success": true})))
 }
 
+#[derive(Deserialize)]
+struct UploadQuery {
+    target: String,
+    name: String,
+}
+
+/// Resolve the working directory of the selected tmux pane, falling back to $HOME.
+fn pane_cwd(target: &str) -> std::path::PathBuf {
+    let target = if target.is_empty() { "0" } else { target };
+    if let Ok(out) = Command::new("tmux")
+        .args(["display-message", "-p", "-t", target, "#{pane_current_path}"])
+        .output()
+    {
+        if out.status.success() {
+            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            if !path.is_empty() {
+                let pb = std::path::PathBuf::from(&path);
+                if pb.is_dir() {
+                    return pb;
+                }
+            }
+        }
+    }
+    std::env::var("HOME")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("."))
+}
+
+/// Reduce an uploaded filename to a safe basename (strips directories and traversal).
+fn safe_filename(name: &str) -> Option<String> {
+    let base = std::path::Path::new(name)
+        .file_name()?
+        .to_str()?
+        .trim()
+        .to_string();
+    if base.is_empty() || base == "." || base == ".." {
+        return None;
+    }
+    let cleaned: String = base
+        .chars()
+        .filter(|c| !c.is_control() && *c != '/' && *c != '\\')
+        .collect();
+    if cleaned.is_empty() {
+        None
+    } else {
+        Some(cleaned)
+    }
+}
+
+/// Pick a destination path that does not overwrite an existing file.
+fn unique_destination(dir: &std::path::Path, filename: &str) -> std::path::PathBuf {
+    let first = dir.join(filename);
+    if !first.exists() {
+        return first;
+    }
+    let p = std::path::Path::new(filename);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(filename);
+    let ext = p.extension().and_then(|s| s.to_str());
+    for n in 1..10000 {
+        let candidate_name = match ext {
+            Some(e) => format!("{}-{}.{}", stem, n, e),
+            None => format!("{}-{}", stem, n),
+        };
+        let candidate = dir.join(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+    first
+}
+
+/// Receive a raw file body and write it into the selected pane's working directory.
+async fn upload_file(
+    axum::extract::Query(query): axum::extract::Query<UploadQuery>,
+    body: Bytes,
+) -> impl IntoResponse {
+    let filename = match safe_filename(&query.name) {
+        Some(f) => f,
+        None => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"success": false, "error": "Invalid filename"})),
+            );
+        }
+    };
+
+    if body.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"success": false, "error": "Empty file"})),
+        );
+    }
+
+    let dir = pane_cwd(&query.target);
+    let dest = unique_destination(&dir, &filename);
+
+    match tokio::fs::write(&dest, &body).await {
+        Ok(()) => {
+            let path = dest.to_string_lossy().to_string();
+            let saved_name = dest
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or(filename);
+            (
+                StatusCode::OK,
+                Json(serde_json::json!({
+                    "success": true,
+                    "path": path,
+                    "name": saved_name,
+                    "size": body.len(),
+                })),
+            )
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"success": false, "error": e.to_string()})),
+        ),
+    }
+}
+
 #[tokio::main]
 async fn main() {
     // Load .env file (ignore if missing)
@@ -1079,6 +1310,12 @@ async fn main() {
         .route("/api/client-error", post(log_client_error))
         .route("/api/bug-report", post(bug_report))
         .route("/api/notify", post(notify_handler))
+        .route(
+            "/api/upload",
+            post(upload_file).layer(DefaultBodyLimit::max(100 * 1024 * 1024)),
+        )
+        .route("/api/serve-image", get(serve_image))
+        .route("/api/serve-file", get(serve_file))
         .route("/health", get(health))
         .route("/voice", get(serve_voice))
         .with_state(config)

@@ -37,7 +37,7 @@ cargo run               # Development
 ## Key Implementation Details
 
 - Uses `-l` flag with `send-keys` for literal input (prevents escape sequence interpretation)
-- Captures last 100 lines of scrollback with `-S -100`
+- Captures last 1000 lines of scrollback with `-S -1000`
 - Window selection persisted in browser localStorage
 - Hostname-based configuration for display modes
 - Prefix mode (Ctrl+B) implemented entirely in frontend JS

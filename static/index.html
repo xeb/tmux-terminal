@@ -259,7 +259,7 @@
             100% { transform: rotate(360deg); }
         }
 
-        .refresh-btn {
+        .menu-btn {
             background: transparent;
             border: 1px solid var(--matrix-dim);
             color: var(--matrix-dim);
@@ -274,32 +274,89 @@
             letter-spacing: 0.05em;
         }
 
-        .refresh-btn:hover {
+        .menu-btn:hover {
             border-color: var(--matrix-green);
             color: var(--matrix-green);
         }
 
-        .refresh-btn:active {
+        .menu-btn:active {
             transform: scale(0.93);
             background: var(--matrix-green);
             color: var(--void);
             border-color: var(--matrix-green);
         }
 
-        .refresh-btn .refresh-icon {
-            display: inline-block;
-            font-style: normal;
-            line-height: 1;
+        /* Action Menu Modal */
+        .action-menu {
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            width: 90%;
+            max-width: 360px;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
         }
 
-        .refresh-btn.loading {
-            pointer-events: none;
-            border-color: var(--matrix-green);
+        .action-menu .modal-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--matrix-dim);
+            font-weight: 700;
+            font-size: 0.85rem;
+            letter-spacing: 0.1em;
+        }
+
+        .action-menu-list {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .action-menu-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 1rem 1.25rem;
+            border: none;
+            border-bottom: 1px solid var(--matrix-dim);
+            background: transparent;
             color: var(--matrix-green);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.85rem;
+            cursor: pointer;
+            text-align: left;
+            transition: background 0.1s;
         }
 
-        .refresh-btn.loading .refresh-icon {
-            animation: refresh-spin 0.6s linear infinite;
+        .action-menu-item:last-child {
+            border-bottom: none;
+        }
+
+        .action-menu-item:hover, .action-menu-item:active {
+            background: var(--matrix-green);
+            color: var(--void);
+        }
+
+        .action-menu-item .action-icon {
+            font-size: 1.2rem;
+            width: 1.5rem;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .action-menu-item .action-label {
+            flex: 1;
+        }
+
+        .action-menu-item .action-shortcut {
+            font-size: 0.65rem;
+            color: var(--matrix-dim);
+            letter-spacing: 0.05em;
+        }
+
+        .action-menu-item:hover .action-shortcut,
+        .action-menu-item:active .action-shortcut {
+            color: var(--void);
+            opacity: 0.7;
         }
 
         /* Rename Modal */
@@ -631,6 +688,271 @@
             color: var(--matrix-green);
         }
 
+        /* Image Preview Modal */
+        .image-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .image-modal-overlay.show {
+            display: flex;
+        }
+
+        .image-modal-header {
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.5rem 1rem;
+            max-width: 90vw;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            user-select: all;
+        }
+
+        .image-modal-content {
+            max-width: 90vw;
+            max-height: 80vh;
+            border: 1px solid var(--matrix-dim);
+            background: var(--terminal-bg);
+        }
+
+        .image-modal-content img {
+            display: block;
+            max-width: 90vw;
+            max-height: 80vh;
+            object-fit: contain;
+        }
+
+        .image-modal-hint {
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.6rem;
+            padding: 0.5rem;
+        }
+
+        .output-content a.image-link,
+        .output-content a.file-link {
+            text-decoration-style: dashed;
+        }
+
+        /* File Viewer Modal */
+        .file-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .file-modal-overlay.show {
+            display: flex;
+        }
+
+        .file-modal-header {
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.5rem 1rem;
+            max-width: 90vw;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            user-select: all;
+        }
+
+        .file-modal-content {
+            max-width: 90vw;
+            max-height: 80vh;
+            width: 80vw;
+            border: 1px solid var(--matrix-dim);
+            background: var(--terminal-bg);
+            overflow: auto;
+        }
+
+        .file-modal-content pre {
+            margin: 0;
+            padding: 1rem;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.75rem;
+            line-height: 1.4;
+            color: var(--matrix-green);
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .file-modal-content .json-key { color: #0066cc; }
+        .file-modal-content .json-string { color: #2a8c2a; }
+        .file-modal-content .json-number { color: #cc6600; }
+        .file-modal-content .json-bool { color: #cc0066; }
+        .file-modal-content .json-null { color: #999; }
+
+        .file-modal-hint {
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.6rem;
+            padding: 0.5rem;
+        }
+
+        .file-modal-loading {
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.8rem;
+            padding: 2rem;
+        }
+
+        /* Visible keyboard focus for bar controls */
+        .menu-btn:focus-visible {
+            outline: 1px solid var(--matrix-green);
+            outline-offset: 1px;
+        }
+
+        /* Upload (+) button — sits in the session bar next to MENU */
+        .upload-btn {
+            font-size: 1.05rem;
+            font-weight: 700;
+            line-height: 1;
+            padding: 3px 10px;
+        }
+
+        /* Upload Modal */
+        .upload-modal {
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            width: 90%;
+            max-width: 420px;
+            max-height: 80%;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .upload-modal .modal-header {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+        }
+
+        .upload-target {
+            font-weight: 400;
+            font-size: 0.6rem;
+            color: var(--matrix-dim);
+            text-transform: none;
+            letter-spacing: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .upload-list {
+            overflow-y: auto;
+            min-height: 2.5rem;
+        }
+
+        .upload-item {
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--matrix-dim);
+        }
+
+        .upload-item:last-child {
+            border-bottom: none;
+        }
+
+        .upload-item-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.75rem;
+            font-size: 0.75rem;
+            margin-bottom: 0.4rem;
+        }
+
+        .upload-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+        }
+
+        .upload-pct {
+            color: var(--matrix-dim);
+            font-variant-numeric: tabular-nums;
+            flex-shrink: 0;
+        }
+
+        /* Terminal-style progress bar: hairline track, solid fill */
+        .upload-bar {
+            height: 8px;
+            border: 1px solid var(--matrix-dim);
+            background: var(--void);
+            overflow: hidden;
+        }
+
+        .upload-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--matrix-green);
+            transition: width 0.15s linear;
+        }
+
+        .upload-status {
+            margin-top: 0.4rem;
+            font-size: 0.6rem;
+            color: var(--matrix-dim);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .upload-item.done .upload-status {
+            color: var(--matrix-green);
+        }
+
+        .upload-item.error .upload-bar {
+            border-color: #ff0040;
+        }
+
+        .upload-item.error .upload-bar-fill {
+            background: #ff0040;
+        }
+
+        .upload-item.error .upload-status {
+            color: #ff0040;
+        }
+
+        .upload-actions {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.6rem 1rem;
+            border-top: 1px solid var(--matrix-dim);
+        }
+
+        .upload-actions .menu-btn {
+            flex: 1;
+            justify-content: center;
+            font-size: 0.7rem;
+            padding: 8px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .upload-bar-fill { transition: none; }
+        }
+
     </style>
 </head>
 <body>
@@ -640,7 +962,9 @@
             <select class="session-select" id="sessionSelect">
                 <option value="">Loading...</option>
             </select>
-            <button class="refresh-btn" id="refreshBtn"><i class="refresh-icon">⟳</i> REFRESH</button>
+            <button class="menu-btn upload-btn" id="uploadBtn" title="Upload file" aria-label="Upload file">+</button>
+            <button class="menu-btn" id="menuBtn">☰ MENU</button>
+            <input type="file" id="fileInput" multiple hidden>
         </div>
 
         <div class="terminal-frame input-frame">
@@ -711,6 +1035,54 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="actionMenuModal">
+        <div class="action-menu">
+            <div class="modal-header">MENU</div>
+            <div class="action-menu-list">
+                <button class="action-menu-item" id="menuNewWindow">
+                    <span class="action-icon">+</span>
+                    <span class="action-label">New Window</span>
+                    <span class="action-shortcut">^B c</span>
+                </button>
+                <button class="action-menu-item" id="menuRenameWindow">
+                    <span class="action-icon">,</span>
+                    <span class="action-label">Rename Window</span>
+                    <span class="action-shortcut">^B ,</span>
+                </button>
+                <button class="action-menu-item" id="menuWindowList">
+                    <span class="action-icon">W</span>
+                    <span class="action-label">Window List</span>
+                    <span class="action-shortcut">^B w</span>
+                </button>
+                <button class="action-menu-item" id="menuNextWindow">
+                    <span class="action-icon">&#x25B6;</span>
+                    <span class="action-label">Next Window</span>
+                    <span class="action-shortcut">^B n</span>
+                </button>
+                <button class="action-menu-item" id="menuPrevWindow">
+                    <span class="action-icon">&#x25C0;</span>
+                    <span class="action-label">Previous Window</span>
+                    <span class="action-shortcut">^B p</span>
+                </button>
+                <button class="action-menu-item" id="menuRefresh">
+                    <span class="action-icon">&#x27F3;</span>
+                    <span class="action-label">Refresh Windows</span>
+                    <span class="action-shortcut">^B r</span>
+                </button>
+                <button class="action-menu-item" id="menuSendCtrlC">
+                    <span class="action-icon">C</span>
+                    <span class="action-label">Send Ctrl+C</span>
+                    <span class="action-shortcut">Ctrl+C</span>
+                </button>
+                <button class="action-menu-item" id="menuHelp">
+                    <span class="action-icon">?</span>
+                    <span class="action-label">Keyboard Shortcuts</span>
+                    <span class="action-shortcut">^B ?</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="renameModal">
         <div class="rename-modal">
             <div class="modal-header">Rename Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B ,</span></div>
@@ -719,8 +1091,35 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="uploadModal">
+        <div class="upload-modal">
+            <div class="modal-header">UPLOAD <span class="upload-target" id="uploadTarget"></span></div>
+            <div class="upload-list" id="uploadList"></div>
+            <div class="upload-actions">
+                <button class="menu-btn" id="uploadAddMore">+ ADD MORE</button>
+                <button class="menu-btn" id="uploadClose">CLOSE</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="file-modal-overlay" id="fileModal">
+        <div class="file-modal-header" id="fileModalPath"></div>
+        <div class="file-modal-content">
+            <pre id="fileModalContent"></pre>
+        </div>
+        <div class="file-modal-hint">Click outside or press Esc to close</div>
+    </div>
+
+    <div class="image-modal-overlay" id="imageModal">
+        <div class="image-modal-header" id="imageModalPath"></div>
+        <div class="image-modal-content">
+            <img id="imageModalImg" src="" alt="Preview">
+        </div>
+        <div class="image-modal-hint">Click outside or press Esc to close</div>
+    </div>
+
     <script>
-        // Linkify terminal output: escape HTML, then wrap URLs in <a> tags
+        // Linkify terminal output: escape HTML, then wrap URLs and image paths in <a> tags
         function linkifyTerminalOutput(text) {
             // Escape HTML special chars to prevent XSS
             const escaped = text
@@ -730,10 +1129,24 @@
                 .replace(/"/g, '&quot;');
 
             // Match http/https URLs - stop at whitespace or common trailing punctuation
-            return escaped.replace(
+            let result = escaped.replace(
                 /(https?:\/\/[^\s&"<>)\]]+)/g,
                 '<a class="terminal-link" href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
             );
+
+            // Match absolute file paths to images (not already inside an href)
+            result = result.replace(
+                /(?<![="\/\w])(\/[\w.\-\/]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg|tiff|tif))(?=[\s&;,)\]"']|$)/gi,
+                '<a class="terminal-link image-link" href="#" data-image-path="$1">$1</a>'
+            );
+
+            // Match absolute file paths to JSON and other text files
+            result = result.replace(
+                /(?<![="\/\w])(\/[\w.\-\/]+\.(?:json|txt|log|csv|xml|yaml|yml|toml|md|ini|cfg))(?=[\s&;,)\]"']|$)/gi,
+                '<a class="terminal-link file-link" href="#" data-file-path="$1">$1</a>'
+            );
+
+            return result;
         }
     </script>
 
@@ -752,7 +1165,8 @@
 
         const commandInput = document.getElementById('commandInput');
         const sessionSelect = document.getElementById('sessionSelect');
-        const refreshBtn = document.getElementById('refreshBtn');
+        const menuBtn = document.getElementById('menuBtn');
+        const actionMenuModal = document.getElementById('actionMenuModal');
         const sendBtn = document.getElementById('sendBtn');
         const outputContent = document.getElementById('outputContent');
         const status = document.getElementById('status');
@@ -854,8 +1268,6 @@
         }
 
         async function loadWindows() {
-            refreshBtn.classList.add('loading');
-
             try {
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), 5000);
@@ -898,7 +1310,6 @@
                 sessionSelect.innerHTML = '<option value="0">0 (default)</option>';
                 showStatus('FAILED TO LOAD WINDOWS', 'error');
             } finally {
-                refreshBtn.classList.remove('loading');
             }
         }
 
@@ -1105,6 +1516,36 @@
         }
 
         function handleModalKeydown(e) {
+            // Handle upload modal
+            if (uploadModal.classList.contains('show')) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeUploadModal();
+                    return true;
+                }
+                return true;
+            }
+
+            // Handle file modal
+            if (fileModal.classList.contains('show')) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeFileModal();
+                    return true;
+                }
+                return true;
+            }
+
+            // Handle image modal
+            if (imageModal.classList.contains('show')) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeImageModal();
+                    return true;
+                }
+                return true;
+            }
+
             // Handle rename modal
             if (renameModal.classList.contains('show')) {
                 if (e.key === 'Escape') {
@@ -1120,6 +1561,16 @@
                     return true;
                 }
                 return true; // consume all keys while rename modal is open
+            }
+
+            // Handle action menu
+            if (actionMenuModal.classList.contains('show')) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeActionMenu();
+                    return true;
+                }
+                return true;
             }
 
             // Handle help modal
@@ -1310,7 +1761,24 @@
         });
 
         sendBtn.addEventListener('click', sendCommand);
-        refreshBtn.addEventListener('click', loadWindows);
+
+        // Action menu
+        function openActionMenu() { actionMenuModal.classList.add('show'); }
+        function closeActionMenu() { actionMenuModal.classList.remove('show'); commandInput.focus(); }
+
+        menuBtn.addEventListener('click', openActionMenu);
+        actionMenuModal.addEventListener('click', (e) => {
+            if (e.target === actionMenuModal) closeActionMenu();
+        });
+
+        document.getElementById('menuNewWindow').addEventListener('click', () => { closeActionMenu(); createNewWindow(); });
+        document.getElementById('menuRenameWindow').addEventListener('click', () => { closeActionMenu(); openRenameModal(); });
+        document.getElementById('menuWindowList').addEventListener('click', () => { closeActionMenu(); openWindowModal(); });
+        document.getElementById('menuNextWindow').addEventListener('click', () => { closeActionMenu(); handlePrefixCommand('n'); });
+        document.getElementById('menuPrevWindow').addEventListener('click', () => { closeActionMenu(); handlePrefixCommand('p'); });
+        document.getElementById('menuRefresh').addEventListener('click', () => { closeActionMenu(); loadWindows(); });
+        document.getElementById('menuSendCtrlC').addEventListener('click', () => { closeActionMenu(); sendKeyToTmux('C-c'); });
+        document.getElementById('menuHelp').addEventListener('click', () => { closeActionMenu(); openHelpModal(); });
         sessionSelect.addEventListener('change', () => {
             localStorage.setItem('tmux-selected-target', sessionSelect.value);
             startCapture();
@@ -1375,6 +1843,242 @@
         });
         renameModal.addEventListener('click', (e) => {
             if (e.target === renameModal) closeRenameModal();
+        });
+
+        // File viewer modal
+        const fileModal = document.getElementById('fileModal');
+        const fileModalContent = document.getElementById('fileModalContent');
+        const fileModalPath = document.getElementById('fileModalPath');
+
+        function syntaxHighlightJson(json) {
+            // Pretty-print then syntax highlight
+            const str = (typeof json === 'string') ? json : JSON.stringify(json, null, 2);
+            // Escape HTML first
+            const escaped = str
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            // Highlight tokens
+            return escaped.replace(
+                /("(?:\\.|[^"\\])*")\s*:/g,
+                '<span class="json-key">$1</span>:'
+            ).replace(
+                /:\s*("(?:\\.|[^"\\])*")/g,
+                ': <span class="json-string">$1</span>'
+            ).replace(
+                /:\s*(\d+\.?\d*(?:[eE][+-]?\d+)?)/g,
+                ': <span class="json-number">$1</span>'
+            ).replace(
+                /:\s*(true|false)/g,
+                ': <span class="json-bool">$1</span>'
+            ).replace(
+                /:\s*(null)/g,
+                ': <span class="json-null">$1</span>'
+            ).replace(
+                /(?<=[\[,\s])("(?:\\.|[^"\\])*")(?=\s*[,\]])/g,
+                '<span class="json-string">$1</span>'
+            ).replace(
+                /(?<=[\[,\s])(\d+\.?\d*(?:[eE][+-]?\d+)?)(?=\s*[,\]])/g,
+                '<span class="json-number">$1</span>'
+            ).replace(
+                /(?<=[\[,\s])(true|false)(?=\s*[,\]])/g,
+                '<span class="json-bool">$1</span>'
+            ).replace(
+                /(?<=[\[,\s])(null)(?=\s*[,\]])/g,
+                '<span class="json-null">$1</span>'
+            );
+        }
+
+        async function openFileModal(filePath) {
+            fileModalPath.textContent = filePath;
+            fileModalContent.textContent = 'Loading...';
+            fileModal.classList.add('show');
+
+            try {
+                const response = await fetch('/api/serve-file?path=' + encodeURIComponent(filePath));
+                if (!response.ok) {
+                    fileModalContent.textContent = 'Error: ' + (await response.text());
+                    return;
+                }
+                const text = await response.text();
+                const ext = filePath.split('.').pop().toLowerCase();
+
+                if (ext === 'json') {
+                    try {
+                        const parsed = JSON.parse(text);
+                        fileModalContent.innerHTML = syntaxHighlightJson(parsed);
+                    } catch {
+                        // Invalid JSON, show raw with basic escaping
+                        fileModalContent.textContent = text;
+                    }
+                } else {
+                    fileModalContent.textContent = text;
+                }
+            } catch (err) {
+                fileModalContent.textContent = 'Failed to load file: ' + err.message;
+            }
+        }
+
+        function closeFileModal() {
+            fileModal.classList.remove('show');
+            fileModalContent.textContent = '';
+            commandInput.focus();
+        }
+
+        fileModal.addEventListener('click', (e) => {
+            if (e.target === fileModal) closeFileModal();
+        });
+
+        // Delegate click for file links in output
+        outputContent.addEventListener('click', (e) => {
+            const fileLink = e.target.closest('a.file-link');
+            if (fileLink) {
+                e.preventDefault();
+                const filePath = fileLink.dataset.filePath;
+                if (filePath) openFileModal(filePath);
+                return;
+            }
+        });
+
+        // Image preview modal
+        const imageModal = document.getElementById('imageModal');
+        const imageModalImg = document.getElementById('imageModalImg');
+        const imageModalPath = document.getElementById('imageModalPath');
+
+        function openImageModal(imagePath) {
+            imageModalPath.textContent = imagePath;
+            imageModalImg.src = '/api/serve-image?path=' + encodeURIComponent(imagePath);
+            imageModal.classList.add('show');
+        }
+
+        function closeImageModal() {
+            imageModal.classList.remove('show');
+            imageModalImg.src = '';
+            commandInput.focus();
+        }
+
+        imageModal.addEventListener('click', (e) => {
+            if (e.target === imageModal) closeImageModal();
+        });
+
+        // Delegate click for image links in output
+        outputContent.addEventListener('click', (e) => {
+            const link = e.target.closest('a.image-link');
+            if (link) {
+                e.preventDefault();
+                const imagePath = link.dataset.imagePath;
+                if (imagePath) openImageModal(imagePath);
+            }
+        });
+
+        // ---- File upload ----
+        const uploadBtn = document.getElementById('uploadBtn');
+        const fileInput = document.getElementById('fileInput');
+        const uploadModal = document.getElementById('uploadModal');
+        const uploadList = document.getElementById('uploadList');
+        const uploadTargetEl = document.getElementById('uploadTarget');
+        const uploadCloseBtn = document.getElementById('uploadClose');
+        const uploadAddMoreBtn = document.getElementById('uploadAddMore');
+        let uploadSeq = 0;
+
+        function openUploadPicker() {
+            // Reset so picking the same file again still fires a change event
+            fileInput.value = '';
+            fileInput.click();
+        }
+
+        function openUploadModal() {
+            uploadTargetEl.textContent = '→ ' + (sessionSelect.value || '0');
+            // Clear finished rows from earlier batches; keep any still uploading
+            uploadList.querySelectorAll('.upload-item.done, .upload-item.error').forEach(el => el.remove());
+            uploadModal.classList.add('show');
+        }
+
+        function closeUploadModal() {
+            uploadModal.classList.remove('show');
+            commandInput.focus();
+        }
+
+        function insertPathIntoInput(path) {
+            const cur = commandInput.value;
+            const sep = (cur && !cur.endsWith(' ')) ? ' ' : '';
+            // Shell-quote the path if it contains whitespace
+            const quoted = /\s/.test(path) ? `'${path.replace(/'/g, `'\\''`)}'` : path;
+            commandInput.value = cur + sep + quoted + ' ';
+        }
+
+        function uploadOneFile(file) {
+            const item = document.createElement('div');
+            item.className = 'upload-item uploading';
+            item.id = 'upload-' + (++uploadSeq);
+            item.innerHTML =
+                '<div class="upload-item-top">' +
+                    '<span class="upload-name"></span>' +
+                    '<span class="upload-pct">0%</span>' +
+                '</div>' +
+                '<div class="upload-bar"><div class="upload-bar-fill"></div></div>' +
+                '<div class="upload-status">UPLOADING…</div>';
+            // Untrusted filename goes in via textContent (no HTML injection)
+            item.querySelector('.upload-name').textContent = file.name;
+            uploadList.appendChild(item);
+
+            const pctEl = item.querySelector('.upload-pct');
+            const fillEl = item.querySelector('.upload-bar-fill');
+            const statusEl = item.querySelector('.upload-status');
+            const target = sessionSelect.value || '0';
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/upload?target=' + encodeURIComponent(target) +
+                             '&name=' + encodeURIComponent(file.name));
+
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    pctEl.textContent = pct + '%';
+                    fillEl.style.width = pct + '%';
+                }
+            });
+
+            xhr.addEventListener('load', () => {
+                let data = {};
+                try { data = JSON.parse(xhr.responseText); } catch (_) {}
+                if (xhr.status >= 200 && xhr.status < 300 && data.success) {
+                    item.classList.remove('uploading');
+                    item.classList.add('done');
+                    pctEl.textContent = '100%';
+                    fillEl.style.width = '100%';
+                    statusEl.textContent = '→ ' + data.path;
+                    insertPathIntoInput(data.path);
+                    showStatus('UPLOADED ' + (data.name || file.name), 'success');
+                } else {
+                    item.classList.remove('uploading');
+                    item.classList.add('error');
+                    statusEl.textContent = data.error || ('FAILED (' + xhr.status + ')');
+                    showStatus('UPLOAD FAILED', 'error');
+                }
+            });
+
+            xhr.addEventListener('error', () => {
+                item.classList.remove('uploading');
+                item.classList.add('error');
+                statusEl.textContent = 'CONNECTION ERROR';
+                showStatus('UPLOAD FAILED', 'error');
+            });
+
+            xhr.send(file);
+        }
+
+        uploadBtn.addEventListener('click', openUploadPicker);
+        uploadAddMoreBtn.addEventListener('click', openUploadPicker);
+        uploadCloseBtn.addEventListener('click', closeUploadModal);
+        uploadModal.addEventListener('click', (e) => {
+            if (e.target === uploadModal) closeUploadModal();
+        });
+        fileInput.addEventListener('change', () => {
+            const files = Array.from(fileInput.files || []);
+            if (files.length === 0) return;
+            openUploadModal();
+            files.forEach(uploadOneFile);
         });
 
         // Load windows and focus input on load
