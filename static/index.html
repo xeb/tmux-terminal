@@ -331,6 +331,11 @@
             border-bottom: none;
         }
 
+        /* Logout: visually separated from tmux actions */
+        .action-menu-item.menu-logout {
+            border-top: 2px solid var(--matrix-dim);
+        }
+
         .action-menu-item:hover, .action-menu-item:active {
             background: var(--matrix-green);
             color: var(--void);
@@ -1079,6 +1084,11 @@
                     <span class="action-label">Keyboard Shortcuts</span>
                     <span class="action-shortcut">^B ?</span>
                 </button>
+                <button class="action-menu-item menu-logout" id="menuLogout">
+                    <span class="action-icon">&#x23FB;</span>
+                    <span class="action-label">Logout</span>
+                    <span class="action-shortcut">Access</span>
+                </button>
             </div>
         </div>
     </div>
@@ -1779,6 +1789,14 @@
         document.getElementById('menuRefresh').addEventListener('click', () => { closeActionMenu(); loadWindows(); });
         document.getElementById('menuSendCtrlC').addEventListener('click', () => { closeActionMenu(); sendKeyToTmux('C-c'); });
         document.getElementById('menuHelp').addEventListener('click', () => { closeActionMenu(); openHelpModal(); });
+        document.getElementById('menuLogout').addEventListener('click', () => {
+            closeActionMenu();
+            if (confirm('Log out of Cloudflare Access?')) {
+                // Cloudflare intercepts this same-origin path at the edge,
+                // clears the CF_Authorization session cookie, and shows its logout page.
+                window.location.href = '/cdn-cgi/access/logout';
+            }
+        });
         sessionSelect.addEventListener('change', () => {
             localStorage.setItem('tmux-selected-target', sessionSelect.value);
             startCapture();
