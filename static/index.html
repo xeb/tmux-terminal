@@ -1069,6 +1069,11 @@
                     <span class="action-label">Previous Window</span>
                     <span class="action-shortcut">^B p</span>
                 </button>
+                <button class="action-menu-item" id="menuToggleMaster">
+                    <span class="action-icon">M</span>
+                    <span class="action-label" id="menuToggleMasterLabel">Unhide MASTER</span>
+                    <span class="action-shortcut">Filter</span>
+                </button>
                 <button class="action-menu-item" id="menuRefresh">
                     <span class="action-icon">&#x27F3;</span>
                     <span class="action-label">Refresh Windows</span>
@@ -1812,7 +1817,13 @@
         sendBtn.addEventListener('click', sendCommand);
 
         // Action menu
-        function openActionMenu() { actionMenuModal.classList.add('show'); }
+        function openActionMenu() {
+            // Label states the action the click performs, recomputed on every open
+            // so it cannot drift out of sync with stored state.
+            document.getElementById('menuToggleMasterLabel').textContent =
+                showMaster ? 'Hide MASTER' : 'Unhide MASTER';
+            actionMenuModal.classList.add('show');
+        }
         function closeActionMenu() { actionMenuModal.classList.remove('show'); commandInput.focus(); }
 
         menuBtn.addEventListener('click', openActionMenu);
@@ -1826,6 +1837,13 @@
         document.getElementById('menuNextWindow').addEventListener('click', () => { closeActionMenu(); handlePrefixCommand('n'); });
         document.getElementById('menuPrevWindow').addEventListener('click', () => { closeActionMenu(); handlePrefixCommand('p'); });
         document.getElementById('menuRefresh').addEventListener('click', () => { closeActionMenu(); loadWindows(); });
+        document.getElementById('menuToggleMaster').addEventListener('click', () => {
+            closeActionMenu();
+            showMaster = !showMaster;
+            localStorage.setItem(SHOW_MASTER_KEY, String(showMaster));
+            renderWindowOptions();
+            showStatus(showMaster ? 'MASTER SHOWN' : 'MASTER HIDDEN', 'success');
+        });
         document.getElementById('menuSendCtrlC').addEventListener('click', () => { closeActionMenu(); sendKeyToTmux('C-c'); });
         document.getElementById('menuHelp').addEventListener('click', () => { closeActionMenu(); openHelpModal(); });
         document.getElementById('menuLogout').addEventListener('click', () => {
