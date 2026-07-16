@@ -9,6 +9,7 @@ ExecStart=%h/bin/tmux-terminal/tmux-terminal
 Restart=on-failure
 RestartSec=5
 Environment=PORT=5533
+Environment=PATH=/home/xeb/.local/bin:/home/xeb/.cargo/bin:/usr/local/bin:/usr/bin:/bin
 
 [Install]
 WantedBy=default.target

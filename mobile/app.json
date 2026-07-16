@@ -1,0 +1,49 @@
+{
+  "expo": {
+    "name": "TMUX Terminal",
+    "slug": "tmux-terminal",
+    "version": "1.0.0",
+    "orientation": "portrait",
+    "userInterfaceStyle": "light",
+    "splash": {
+      "backgroundColor": "#f8f8f8"
+    },
+    "ios": {
+      "supportsTablet": true,
+      "bundleIdentifier": "com.tmux.terminal",
+      "infoPlist": {
+        "NSPhotoLibraryUsageDescription": "Allow TMUX Terminal to attach screenshots to bug reports.",
+        "ITSAppUsesNonExemptEncryption": false
+      }
+    },
+    "android": {
+      "package": "com.tmux.terminal",
+      "adaptiveIcon": {
+        "backgroundColor": "#f8f8f8"
+      },
+      "permissions": []
+    },
+    "plugins": [
+      "expo-updates",
+      [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow TMUX Terminal to attach screenshots to bug reports."
+        }
+      ]
+    ],
+    "updates": {
+      "url": "https://u.expo.dev/61bf32a9-07e6-4836-a9eb-f986b5bc52f9",
+      "checkAutomatically": "ON_LOAD"
+    },
+    "runtimeVersion": {
+      "policy": "appVersion"
+    },
+    "extra": {
+      "eas": {
+        "projectId": "61bf32a9-07e6-4836-a9eb-f986b5bc52f9"
+      }
+    },
+    "owner": "xeb"
+  }
+}

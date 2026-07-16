@@ -9,12 +9,12 @@
     <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;700&family=Orbitron:wght@700;900&display=swap" rel="stylesheet">
     <style>
         :root {
-            --void: #050505;
-            --terminal-bg: #0a0a0a;
-            --matrix-green: #00ff41;
-            --matrix-dim: #00aa2a;
-            --matrix-glow: #00ff4180;
-            --scanline-opacity: 0.03;
+            --void: #ffffff;
+            --terminal-bg: #f8f8f8;
+            --matrix-green: #000000;
+            --matrix-dim: #444444;
+            --matrix-glow: #00000020;
+            --scanline-opacity: 0;
         }
 
         /* Desktop layout - larger fonts and input */
@@ -22,7 +22,7 @@
             :root {
                 --output-font-size: 10pt;
                 --input-font-size: 14pt;
-                --input-height: 84px;
+                --input-height: 5.5em;
             }
         }
 
@@ -96,10 +96,10 @@
         .terminal-frame::before {
             content: '';
             position: absolute;
-            top: -1px;
-            left: -1px;
-            right: -1px;
-            bottom: -1px;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
             border: 1px solid var(--matrix-green);
             opacity: 0.3;
             pointer-events: none;
@@ -152,16 +152,30 @@
             background: var(--terminal-bg);
         }
 
+        .output-content a.terminal-link {
+            color: inherit;
+            text-decoration: underline;
+            text-underline-offset: 2px;
+            cursor: pointer;
+            border-radius: 1px;
+        }
+
+        .output-content a.terminal-link:hover {
+            background: var(--matrix-dim);
+            color: var(--terminal-bg);
+            text-decoration: none;
+        }
+
         .output-content::-webkit-scrollbar-thumb {
             background: var(--matrix-dim);
         }
 
         /* Input pane - top, fixed height */
         .input-frame {
-            flex: 0 0 var(--input-height, 36px) !important;
-            height: var(--input-height, 36px);
-            min-height: var(--input-height, 36px);
-            max-height: var(--input-height, 36px);
+            flex: 0 0 var(--input-height, 5.5em) !important;
+            height: var(--input-height, 5.5em);
+            min-height: var(--input-height, 5.5em);
+            max-height: var(--input-height, 5.5em);
         }
 
         .command-input {
@@ -177,6 +191,9 @@
             outline: none;
             caret-color: var(--matrix-green);
             line-height: 1.4;
+            -webkit-appearance: none;
+            appearance: none;
+            box-sizing: border-box;
         }
 
         .command-input::placeholder {
@@ -185,8 +202,8 @@
         }
 
         .command-input::selection {
-            background: var(--matrix-green);
-            color: var(--void);
+            background: #0066cc;
+            color: #ffffff;
         }
 
         /* Session Input */
@@ -237,7 +254,12 @@
             padding: 0.5rem;
         }
 
-        .refresh-btn {
+        @keyframes refresh-spin {
+            0%   { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .menu-btn {
             background: transparent;
             border: 1px solid var(--matrix-dim);
             color: var(--matrix-dim);
@@ -245,17 +267,141 @@
             font-size: 0.65rem;
             padding: 4px 8px;
             cursor: pointer;
-            transition: all 0.2s ease;
+            transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.1s;
+            display: inline-flex;
+            align-items: center;
+            gap: 5px;
+            letter-spacing: 0.05em;
         }
 
-        .refresh-btn:hover {
+        .menu-btn:hover {
             border-color: var(--matrix-green);
             color: var(--matrix-green);
         }
 
-        .refresh-btn.loading {
-            opacity: 0.5;
-            pointer-events: none;
+        .menu-btn:active {
+            transform: scale(0.93);
+            background: var(--matrix-green);
+            color: var(--void);
+            border-color: var(--matrix-green);
+        }
+
+        /* Action Menu Modal */
+        .action-menu {
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            width: 90%;
+            max-width: 360px;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .action-menu .modal-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--matrix-dim);
+            font-weight: 700;
+            font-size: 0.85rem;
+            letter-spacing: 0.1em;
+        }
+
+        .action-menu-list {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .action-menu-item {
+            display: flex;
+            align-items: center;
+            gap: 0.75rem;
+            padding: 1rem 1.25rem;
+            border: none;
+            border-bottom: 1px solid var(--matrix-dim);
+            background: transparent;
+            color: var(--matrix-green);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.85rem;
+            cursor: pointer;
+            text-align: left;
+            transition: background 0.1s;
+        }
+
+        .action-menu-item:last-child {
+            border-bottom: none;
+        }
+
+        /* Logout: visually separated from tmux actions */
+        .action-menu-item.menu-logout {
+            border-top: 2px solid var(--matrix-dim);
+        }
+
+        .action-menu-item:hover, .action-menu-item:active {
+            background: var(--matrix-green);
+            color: var(--void);
+        }
+
+        .action-menu-item .action-icon {
+            font-size: 1.2rem;
+            width: 1.5rem;
+            text-align: center;
+            flex-shrink: 0;
+        }
+
+        .action-menu-item .action-label {
+            flex: 1;
+        }
+
+        .action-menu-item .action-shortcut {
+            font-size: 0.65rem;
+            color: var(--matrix-dim);
+            letter-spacing: 0.05em;
+        }
+
+        .action-menu-item:hover .action-shortcut,
+        .action-menu-item:active .action-shortcut {
+            color: var(--void);
+            opacity: 0.7;
+        }
+
+        /* Rename Modal */
+        .rename-modal {
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            min-width: 300px;
+            max-width: 80%;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .rename-modal .modal-header {
+            padding: 0.75rem 1rem;
+            border-bottom: 1px solid var(--matrix-dim);
+        }
+
+        .rename-input {
+            width: 100%;
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid var(--matrix-dim);
+            color: var(--matrix-green);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.9rem;
+            padding: 0.75rem 1rem;
+            outline: none;
+            caret-color: var(--matrix-green);
+        }
+
+        .rename-input:focus {
+            border-bottom-color: var(--matrix-green);
+        }
+
+        .rename-hint {
+            padding: 0.5rem 1rem;
+            font-size: 0.65rem;
+            color: var(--matrix-dim);
         }
 
         /* Send Button */
@@ -300,11 +446,8 @@
 
         .send-btn:hover,
         .send-btn:active {
-            background: rgba(0, 255, 65, 0.1);
-            box-shadow:
-                0 0 20px var(--matrix-glow),
-                inset 0 0 20px rgba(0, 255, 65, 0.1);
-            text-shadow: 0 0 10px var(--matrix-green);
+            background: rgba(0, 0, 0, 0.05);
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         }
 
         .send-btn:active {
@@ -344,7 +487,6 @@
         .status.success {
             border-color: var(--matrix-green);
             color: var(--matrix-green);
-            text-shadow: 0 0 10px var(--matrix-glow);
         }
 
         /* Vignette */
@@ -377,13 +519,14 @@
             font-weight: 700;
             z-index: 1002;
             opacity: 0;
+            pointer-events: none;
             transition: opacity 0.15s ease;
-            text-shadow: 0 0 10px var(--matrix-glow);
-            box-shadow: 0 0 10px var(--matrix-glow);
+            box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
         }
 
         .prefix-indicator.active {
             opacity: 1;
+            pointer-events: auto;
         }
 
         .prefix-title {
@@ -417,7 +560,7 @@
         .help-modal {
             background: var(--terminal-bg);
             border: 1px solid var(--matrix-green);
-            box-shadow: 0 0 30px var(--matrix-glow);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
             min-width: 280px;
             max-width: 90%;
             padding: 1rem;
@@ -480,7 +623,7 @@
         .window-modal {
             background: var(--terminal-bg);
             border: 1px solid var(--matrix-green);
-            box-shadow: 0 0 30px var(--matrix-glow);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
             min-width: 300px;
             max-width: 80%;
             max-height: 70%;
@@ -497,7 +640,6 @@
             letter-spacing: 0.1em;
             text-transform: uppercase;
             color: var(--matrix-green);
-            text-shadow: 0 0 10px var(--matrix-glow);
         }
 
         .modal-hint {
@@ -523,17 +665,17 @@
         }
 
         .window-item:hover {
-            background: rgba(0, 255, 65, 0.1);
+            background: rgba(0, 0, 0, 0.05);
         }
 
         .window-item.selected {
-            background: rgba(0, 255, 65, 0.2);
+            background: rgba(0, 0, 0, 0.1);
             border-left-color: var(--matrix-green);
         }
 
         .window-item.current {
             color: var(--matrix-green);
-            text-shadow: 0 0 5px var(--matrix-glow);
+            font-weight: 700;
         }
 
         .window-target {
@@ -550,19 +692,284 @@
             font-size: 0.7rem;
             color: var(--matrix-green);
         }
+
+        /* Image Preview Modal */
+        .image-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .image-modal-overlay.show {
+            display: flex;
+        }
+
+        .image-modal-header {
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.5rem 1rem;
+            max-width: 90vw;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            user-select: all;
+        }
+
+        .image-modal-content {
+            max-width: 90vw;
+            max-height: 80vh;
+            border: 1px solid var(--matrix-dim);
+            background: var(--terminal-bg);
+        }
+
+        .image-modal-content img {
+            display: block;
+            max-width: 90vw;
+            max-height: 80vh;
+            object-fit: contain;
+        }
+
+        .image-modal-hint {
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.6rem;
+            padding: 0.5rem;
+        }
+
+        .output-content a.image-link,
+        .output-content a.file-link {
+            text-decoration-style: dashed;
+        }
+
+        /* File Viewer Modal */
+        .file-modal-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: rgba(0, 0, 0, 0.85);
+            z-index: 3000;
+            display: none;
+            align-items: center;
+            justify-content: center;
+            flex-direction: column;
+        }
+
+        .file-modal-overlay.show {
+            display: flex;
+        }
+
+        .file-modal-header {
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.7rem;
+            padding: 0.5rem 1rem;
+            max-width: 90vw;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            user-select: all;
+        }
+
+        .file-modal-content {
+            max-width: 90vw;
+            max-height: 80vh;
+            width: 80vw;
+            border: 1px solid var(--matrix-dim);
+            background: var(--terminal-bg);
+            overflow: auto;
+        }
+
+        .file-modal-content pre {
+            margin: 0;
+            padding: 1rem;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.75rem;
+            line-height: 1.4;
+            color: var(--matrix-green);
+            white-space: pre-wrap;
+            word-break: break-all;
+        }
+
+        .file-modal-content .json-key { color: #0066cc; }
+        .file-modal-content .json-string { color: #2a8c2a; }
+        .file-modal-content .json-number { color: #cc6600; }
+        .file-modal-content .json-bool { color: #cc0066; }
+        .file-modal-content .json-null { color: #999; }
+
+        .file-modal-hint {
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.6rem;
+            padding: 0.5rem;
+        }
+
+        .file-modal-loading {
+            color: var(--matrix-dim);
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.8rem;
+            padding: 2rem;
+        }
+
+        /* Visible keyboard focus for bar controls */
+        .menu-btn:focus-visible {
+            outline: 1px solid var(--matrix-green);
+            outline-offset: 1px;
+        }
+
+        /* Upload (+) button — sits in the session bar next to MENU */
+        .upload-btn {
+            font-size: 1.05rem;
+            font-weight: 700;
+            line-height: 1;
+            padding: 3px 10px;
+        }
+
+        /* Upload Modal */
+        .upload-modal {
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+            width: 90%;
+            max-width: 420px;
+            max-height: 80%;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
+        .upload-modal .modal-header {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+        }
+
+        .upload-target {
+            font-weight: 400;
+            font-size: 0.6rem;
+            color: var(--matrix-dim);
+            text-transform: none;
+            letter-spacing: 0;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .upload-list {
+            overflow-y: auto;
+            min-height: 2.5rem;
+        }
+
+        .upload-item {
+            padding: 0.6rem 1rem;
+            border-bottom: 1px solid var(--matrix-dim);
+        }
+
+        .upload-item:last-child {
+            border-bottom: none;
+        }
+
+        .upload-item-top {
+            display: flex;
+            justify-content: space-between;
+            gap: 0.75rem;
+            font-size: 0.75rem;
+            margin-bottom: 0.4rem;
+        }
+
+        .upload-name {
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+            flex: 1;
+        }
+
+        .upload-pct {
+            color: var(--matrix-dim);
+            font-variant-numeric: tabular-nums;
+            flex-shrink: 0;
+        }
+
+        /* Terminal-style progress bar: hairline track, solid fill */
+        .upload-bar {
+            height: 8px;
+            border: 1px solid var(--matrix-dim);
+            background: var(--void);
+            overflow: hidden;
+        }
+
+        .upload-bar-fill {
+            height: 100%;
+            width: 0%;
+            background: var(--matrix-green);
+            transition: width 0.15s linear;
+        }
+
+        .upload-status {
+            margin-top: 0.4rem;
+            font-size: 0.6rem;
+            color: var(--matrix-dim);
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .upload-item.done .upload-status {
+            color: var(--matrix-green);
+        }
+
+        .upload-item.error .upload-bar {
+            border-color: #ff0040;
+        }
+
+        .upload-item.error .upload-bar-fill {
+            background: #ff0040;
+        }
+
+        .upload-item.error .upload-status {
+            color: #ff0040;
+        }
+
+        .upload-actions {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.6rem 1rem;
+            border-top: 1px solid var(--matrix-dim);
+        }
+
+        .upload-actions .menu-btn {
+            flex: 1;
+            justify-content: center;
+            font-size: 0.7rem;
+            padding: 8px;
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .upload-bar-fill { transition: none; }
+        }
+
     </style>
 </head>
 <body>
-    <div class="scanlines"></div>
-    <div class="vignette"></div>
-
     <main class="terminal-container">
         <div class="session-bar">
             <span class="session-label">TARGET:</span>
             <select class="session-select" id="sessionSelect">
                 <option value="">Loading...</option>
             </select>
-            <button class="refresh-btn" id="refreshBtn">REFRESH</button>
+            <button class="menu-btn upload-btn" id="uploadBtn" title="Upload file" aria-label="Upload file">+</button>
+            <button class="menu-btn" id="menuBtn">☰ MENU</button>
+            <input type="file" id="fileInput" multiple hidden>
         </div>
 
         <div class="terminal-frame input-frame">
@@ -585,6 +992,7 @@
         <div class="terminal-frame output-frame">
             <div class="output-content" id="outputContent">Connecting...</div>
         </div>
+
     </main>
 
     <div class="status" id="status"></div>
@@ -593,9 +1001,11 @@
         <div class="prefix-title">^B PREFIX</div>
         <div class="prefix-hints">
             <span><kbd>c</kbd> new window</span>
+            <span><kbd>,</kbd> rename window</span>
             <span><kbd>w</kbd> window list</span>
             <span><kbd>n</kbd> next window</span>
             <span><kbd>p</kbd> prev window</span>
+            <span><kbd>r</kbd> refresh</span>
             <span><kbd>?</kbd> help</span>
         </div>
     </div>
@@ -606,13 +1016,16 @@
             <div class="help-section">
                 <h3>Prefix Commands (^B first)</h3>
                 <div class="help-row"><kbd>^B c</kbd> <span>Create new window</span></div>
+                <div class="help-row"><kbd>^B ,</kbd> <span>Rename window</span></div>
                 <div class="help-row"><kbd>^B w</kbd> <span>Window list</span></div>
                 <div class="help-row"><kbd>^B n</kbd> <span>Next window</span></div>
                 <div class="help-row"><kbd>^B p</kbd> <span>Previous window</span></div>
+                <div class="help-row"><kbd>^B r</kbd> <span>Refresh window list</span></div>
                 <div class="help-row"><kbd>^B ?</kbd> <span>This help</span></div>
             </div>
             <div class="help-section">
                 <h3>General</h3>
+                <div class="help-row"><kbd>Ctrl+R</kbd> <span>Refresh windows</span></div>
                 <div class="help-row"><kbd>Enter</kbd> <span>Execute command</span></div>
                 <div class="help-row"><kbd>Esc</kbd> <span>Close modal</span></div>
             </div>
@@ -622,10 +1035,143 @@
     <div class="modal-overlay" id="windowModal">
         <div class="window-modal">
             <div class="modal-header">Choose Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B w</span></div>
-            <div class="modal-hint">↑/↓/j/k navigate • PgUp/PgDn/Home/End jump • Enter select • Esc/q cancel</div>
+            <div class="modal-hint">↑/↓ navigate • j/k reorder • PgUp/PgDn/Home/End jump • Enter select • Esc/q cancel</div>
             <div class="window-list" id="windowList"></div>
         </div>
     </div>
+
+    <div class="modal-overlay" id="actionMenuModal">
+        <div class="action-menu">
+            <div class="modal-header">MENU</div>
+            <div class="action-menu-list">
+                <button class="action-menu-item" id="menuNewWindow">
+                    <span class="action-icon">+</span>
+                    <span class="action-label">New Window</span>
+                    <span class="action-shortcut">^B c</span>
+                </button>
+                <button class="action-menu-item" id="menuRenameWindow">
+                    <span class="action-icon">,</span>
+                    <span class="action-label">Rename Window</span>
+                    <span class="action-shortcut">^B ,</span>
+                </button>
+                <button class="action-menu-item" id="menuWindowList">
+                    <span class="action-icon">W</span>
+                    <span class="action-label">Window List</span>
+                    <span class="action-shortcut">^B w</span>
+                </button>
+                <button class="action-menu-item" id="menuNextWindow">
+                    <span class="action-icon">&#x25B6;</span>
+                    <span class="action-label">Next Window</span>
+                    <span class="action-shortcut">^B n</span>
+                </button>
+                <button class="action-menu-item" id="menuPrevWindow">
+                    <span class="action-icon">&#x25C0;</span>
+                    <span class="action-label">Previous Window</span>
+                    <span class="action-shortcut">^B p</span>
+                </button>
+                <button class="action-menu-item" id="menuToggleMaster">
+                    <span class="action-icon">M</span>
+                    <span class="action-label" id="menuToggleMasterLabel">Unhide MASTER</span>
+                    <span class="action-shortcut">Filter</span>
+                </button>
+                <button class="action-menu-item" id="menuRefresh">
+                    <span class="action-icon">&#x27F3;</span>
+                    <span class="action-label">Refresh Windows</span>
+                    <span class="action-shortcut">^B r</span>
+                </button>
+                <button class="action-menu-item" id="menuSendCtrlC">
+                    <span class="action-icon">C</span>
+                    <span class="action-label">Send Ctrl+C</span>
+                    <span class="action-shortcut">Ctrl+C</span>
+                </button>
+                <button class="action-menu-item" id="menuHelp">
+                    <span class="action-icon">?</span>
+                    <span class="action-label">Keyboard Shortcuts</span>
+                    <span class="action-shortcut">^B ?</span>
+                </button>
+                <button class="action-menu-item menu-logout" id="menuLogout">
+                    <span class="action-icon">&#x23FB;</span>
+                    <span class="action-label">Logout</span>
+                    <span class="action-shortcut">Access</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="renameModal">
+        <div class="rename-modal">
+            <div class="modal-header">Rename Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B ,</span></div>
+            <input type="text" class="rename-input" id="renameInput" placeholder="New window name..." autocomplete="off" spellcheck="false">
+            <div class="rename-hint">Enter to confirm • Esc to cancel</div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="newWindowModal">
+        <div class="rename-modal">
+            <div class="modal-header">New Claude Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B c</span></div>
+            <input type="text" class="rename-input" id="newWindowInput" placeholder="Project name (a-z, 0-9, . _ -)" autocomplete="off" spellcheck="false">
+            <div class="rename-hint">Enter to create • Esc to cancel</div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="uploadModal">
+        <div class="upload-modal">
+            <div class="modal-header">UPLOAD <span class="upload-target" id="uploadTarget"></span></div>
+            <div class="upload-list" id="uploadList"></div>
+            <div class="upload-actions">
+                <button class="menu-btn" id="uploadAddMore">+ ADD MORE</button>
+                <button class="menu-btn" id="uploadClose">CLOSE</button>
+            </div>
+        </div>
+    </div>
+
+    <div class="file-modal-overlay" id="fileModal">
+        <div class="file-modal-header" id="fileModalPath"></div>
+        <div class="file-modal-content">
+            <pre id="fileModalContent"></pre>
+        </div>
+        <div class="file-modal-hint">Click outside or press Esc to close</div>
+    </div>
+
+    <div class="image-modal-overlay" id="imageModal">
+        <div class="image-modal-header" id="imageModalPath"></div>
+        <div class="image-modal-content">
+            <img id="imageModalImg" src="" alt="Preview">
+        </div>
+        <div class="image-modal-hint">Click outside or press Esc to close</div>
+    </div>
+
+    <script>
+        // Linkify terminal output: escape HTML, then wrap URLs and image paths in <a> tags
+        function linkifyTerminalOutput(text) {
+            // Escape HTML special chars to prevent XSS
+            const escaped = text
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;')
+                .replace(/"/g, '&quot;');
+
+            // Match http/https URLs - stop at whitespace or common trailing punctuation
+            let result = escaped.replace(
+                /(https?:\/\/[^\s&"<>)\]]+)/g,
+                '<a class="terminal-link" href="$1" target="_blank" rel="noopener noreferrer">$1</a>'
+            );
+
+            // Match absolute file paths to images (not already inside an href)
+            result = result.replace(
+                /(?<![="\/\w])(\/[\w.\-\/]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg|tiff|tif))(?=[\s&;,)\]"']|$)/gi,
+                '<a class="terminal-link image-link" href="#" data-image-path="$1">$1</a>'
+            );
+
+            // Match absolute file paths to JSON and other text files
+            result = result.replace(
+                /(?<![="\/\w])(\/[\w.\-\/]+\.(?:json|txt|log|csv|xml|yaml|yml|toml|md|ini|cfg))(?=[\s&;,)\]"']|$)/gi,
+                '<a class="terminal-link file-link" href="#" data-file-path="$1">$1</a>'
+            );
+
+            return result;
+        }
+    </script>
 
     <script>
         // Fetch server config for hostname-specific styling
@@ -642,7 +1188,8 @@
 
         const commandInput = document.getElementById('commandInput');
         const sessionSelect = document.getElementById('sessionSelect');
-        const refreshBtn = document.getElementById('refreshBtn');
+        const menuBtn = document.getElementById('menuBtn');
+        const actionMenuModal = document.getElementById('actionMenuModal');
         const sendBtn = document.getElementById('sendBtn');
         const outputContent = document.getElementById('outputContent');
         const status = document.getElementById('status');
@@ -650,6 +1197,10 @@
         const windowModal = document.getElementById('windowModal');
         const windowList = document.getElementById('windowList');
         const helpModal = document.getElementById('helpModal');
+        const renameModal = document.getElementById('renameModal');
+        const renameInput = document.getElementById('renameInput');
+        const newWindowModal = document.getElementById('newWindowModal');
+        const newWindowInput = document.getElementById('newWindowInput');
 
         let captureInterval = null;
         let isFirstCapture = true;
@@ -657,6 +1208,12 @@
         let prefixTimeout = null;
         let modalSelectedIndex = 0;
         let modalWindows = [];
+
+        // MASTER window visibility. Windows whose tmux name contains "MASTER"
+        // are hidden by default; the ☰ MENU toggle reveals them.
+        const SHOW_MASTER_KEY = 'tmux-show-master';
+        let allWindows = [];
+        let showMaster = localStorage.getItem(SHOW_MASTER_KEY) === 'true';
 
         // Command history
         const HISTORY_KEY = 'tmux-command-history';
@@ -710,13 +1267,18 @@
                 });
                 const data = await response.json();
 
+                if (data.window_closed) {
+                    loadWindows();
+                    return;
+                }
+
                 if (data.content) {
                     // Skip update if content unchanged or user is selecting text
                     if (data.content === outputContent.textContent) return;
                     if (hasSelectionInOutput()) return;
 
                     const wasAtBottom = outputContent.scrollHeight - outputContent.scrollTop <= outputContent.clientHeight + 50;
-                    outputContent.textContent = data.content;
+                    outputContent.innerHTML = linkifyTerminalOutput(data.content);
                     if (wasAtBottom || isFirstCapture) {
                         // Use requestAnimationFrame to ensure layout is complete before scrolling
                         requestAnimationFrame(() => {
@@ -736,50 +1298,87 @@
             captureInterval = setInterval(captureOutput, 1000);
         }
 
-        async function loadWindows() {
-            refreshBtn.classList.add('loading');
-            refreshBtn.textContent = '...';
+        function isMasterWindow(win) {
+            return win.name.includes('MASTER');
+        }
 
-            try {
-                const response = await fetch('/api/windows');
-                const windows = await response.json();
+        // The currently selected target is always kept, even when it is a MASTER
+        // window, so hiding never switches the terminal being viewed. If the filter
+        // would empty the list entirely, fall open rather than leave a dead dropdown.
+        function visibleWindows(keepTarget) {
+            if (showMaster) return allWindows;
+            const visible = allWindows.filter(
+                win => !isMasterWindow(win) || win.target === keepTarget
+            );
+            return visible.length > 0 ? visible : allWindows;
+        }
 
-                sessionSelect.innerHTML = '';
+        function renderWindowOptions() {
+            const savedTarget = localStorage.getItem('tmux-selected-target');
+            // Visibility must prefer the live DOM selection over localStorage:
+            // the currently-viewed target may not be persisted yet (e.g. the
+            // fresh-load default selection), so falling back to savedTarget
+            // alone can let the actively-viewed window get hidden out from
+            // under the user. Read sessionSelect.value BEFORE innerHTML is
+            // wiped below, or it will already be empty.
+            //
+            // keepTarget (visibility) and savedTarget (selection restore) are
+            // separate on purpose, but they must stay in lockstep: every writer
+            // of the selection sets both synchronously. A writer that sets only
+            // one would render a stray unselected MASTER window.
+            const keepTarget = sessionSelect.value || savedTarget;
+            const windows = visibleWindows(keepTarget);
 
-                if (windows.length === 0) {
-                    sessionSelect.innerHTML = '<option value="">No windows found</option>';
-                } else {
-                    const savedTarget = localStorage.getItem('tmux-selected-target');
-                    let foundSaved = false;
+            sessionSelect.innerHTML = '';
 
-                    windows.forEach((win, index) => {
-                        const option = document.createElement('option');
-                        option.value = win.target;
-                        option.textContent = `${win.target} - ${win.name}`;
-                        // Select saved target if it exists, otherwise default to first
-                        if (savedTarget && win.target === savedTarget) {
-                            option.selected = true;
-                            foundSaved = true;
-                        } else if (!savedTarget && index === 0) {
-                            option.selected = true;
-                        }
-                        sessionSelect.appendChild(option);
-                    });
+            if (windows.length === 0) {
+                sessionSelect.innerHTML = '<option value="">No windows found</option>';
+                return;
+            }
 
-                    // If saved target wasn't found, select first and clear invalid saved value
-                    if (savedTarget && !foundSaved && windows.length > 0) {
-                        sessionSelect.selectedIndex = 0;
-                        localStorage.removeItem('tmux-selected-target');
-                    }
+            let foundSaved = false;
 
-                    startCapture();
+            windows.forEach((win, index) => {
+                const option = document.createElement('option');
+                option.value = win.target;
+                option.textContent = `${win.target} - ${win.name}`;
+                // Select saved target if it exists, otherwise keep whatever is
+                // currently being viewed selected (it may never have been
+                // persisted — e.g. the fresh-load default), otherwise default
+                // to first.
+                if (savedTarget && win.target === savedTarget) {
+                    option.selected = true;
+                    foundSaved = true;
+                } else if (!savedTarget && keepTarget && win.target === keepTarget) {
+                    option.selected = true;
+                } else if (!savedTarget && !keepTarget && index === 0) {
+                    option.selected = true;
                 }
+                sessionSelect.appendChild(option);
+            });
+
+            // If saved target wasn't found, select first and clear invalid saved value
+            if (savedTarget && !foundSaved) {
+                sessionSelect.selectedIndex = 0;
+                localStorage.removeItem('tmux-selected-target');
+            }
+
+            startCapture();
+            showStatus(`${windows.length} WINDOWS`, 'success');
+        }
+
+        async function loadWindows() {
+            try {
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 5000);
+                const response = await fetch('/api/windows', { signal: controller.signal });
+                clearTimeout(timeout);
+                allWindows = await response.json();
+
+                renderWindowOptions();
             } catch (err) {
                 sessionSelect.innerHTML = '<option value="0">0 (default)</option>';
                 showStatus('FAILED TO LOAD WINDOWS', 'error');
-            } finally {
-                refreshBtn.classList.remove('loading');
-                refreshBtn.textContent = 'REFRESH';
             }
         }
 
@@ -870,6 +1469,51 @@
             commandInput.focus();
         }
 
+        function openRenameModal() {
+            const target = sessionSelect.value;
+            if (!target) {
+                showStatus('NO WINDOW SELECTED', 'error');
+                return;
+            }
+            // Pre-fill with current window name
+            const currentOption = sessionSelect.options[sessionSelect.selectedIndex];
+            const currentName = currentOption ? (currentOption.textContent.split(' - ')[1] || '') : '';
+            renameInput.value = currentName;
+            renameModal.classList.add('show');
+            setTimeout(() => {
+                renameInput.focus();
+                renameInput.select();
+            }, 50);
+        }
+
+        function closeRenameModal() {
+            renameModal.classList.remove('show');
+            commandInput.focus();
+        }
+
+        async function renameCurrentWindow(newName) {
+            const target = sessionSelect.value;
+            if (!target || !newName.trim()) return;
+
+            try {
+                const response = await fetch('/api/rename-window', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target, name: newName.trim() }),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showStatus('RENAMED: ' + newName.trim(), 'success');
+                    await loadWindows();
+                } else {
+                    showStatus(data.error || 'RENAME FAILED', 'error');
+                }
+            } catch (err) {
+                showStatus('CONNECTION ERROR', 'error');
+            }
+        }
+
+
         function renderWindowList() {
             windowList.innerHTML = modalWindows.map((win, i) => `
                 <div class="window-item ${i === modalSelectedIndex ? 'selected' : ''} ${win.current ? 'current' : ''}"
@@ -904,7 +1548,113 @@
             closeWindowModal();
         }
 
+        async function reorderWindow(fromIdx, toIdx) {
+            const fromWin = modalWindows[fromIdx];
+            const toWin = modalWindows[toIdx];
+            if (!fromWin || !toWin) return;
+
+            // Extract session name from target (e.g. "main:3" -> "main")
+            const session = fromWin.target.split(':')[0];
+            const fromWindowIndex = parseInt(fromWin.target.split(':')[1]);
+            const toWindowIndex = parseInt(toWin.target.split(':')[1]);
+
+            try {
+                const response = await fetch('/api/move-window', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ session, from_index: fromWindowIndex, to_index: toWindowIndex }),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    // Swap in local array and update targets
+                    const tmpTarget = fromWin.target;
+                    fromWin.target = toWin.target;
+                    toWin.target = tmpTarget;
+                    modalWindows[fromIdx] = toWin;
+                    modalWindows[toIdx] = fromWin;
+                    modalSelectedIndex = toIdx;
+                    renderWindowList();
+                    // Refresh the dropdown too
+                    await loadWindows();
+                } else {
+                    showStatus(data.error || 'MOVE FAILED', 'error');
+                }
+            } catch (err) {
+                showStatus('CONNECTION ERROR', 'error');
+            }
+        }
+
         function handleModalKeydown(e) {
+            // Handle upload modal
+            if (uploadModal.classList.contains('show')) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeUploadModal();
+                    return true;
+                }
+                return true;
+            }
+
+            // Handle file modal
+            if (fileModal.classList.contains('show')) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeFileModal();
+                    return true;
+                }
+                return true;
+            }
+
+            // Handle image modal
+            if (imageModal.classList.contains('show')) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeImageModal();
+                    return true;
+                }
+                return true;
+            }
+
+            // Handle new-window prompt
+            if (newWindowModal.classList.contains('show')) {
+                if (e.key === 'Escape') { e.preventDefault(); closeNewWindowModal(); return true; }
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const name = newWindowInput.value;
+                    closeNewWindowModal();
+                    submitNewWindow(name);
+                    return true;
+                }
+                return true; // consume all keys while the prompt is open
+            }
+
+            // Handle rename modal
+            if (renameModal.classList.contains('show')) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeRenameModal();
+                    return true;
+                }
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const newName = renameInput.value;
+                    closeRenameModal();
+                    renameCurrentWindow(newName);
+                    return true;
+                }
+                return true; // consume all keys while rename modal is open
+            }
+
+            // Handle action menu
+            if (actionMenuModal.classList.contains('show')) {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    closeActionMenu();
+                    return true;
+                }
+                return true;
+            }
+
             // Handle help modal
             if (helpModal.classList.contains('show')) {
                 if (e.key === 'Escape' || e.key === 'q' || e.key === '?') {
@@ -919,16 +1669,26 @@
 
             switch (e.key) {
                 case 'ArrowUp':
-                case 'k':
                     e.preventDefault();
                     modalSelectedIndex = Math.max(0, modalSelectedIndex - 1);
                     renderWindowList();
                     return true;
                 case 'ArrowDown':
-                case 'j':
                     e.preventDefault();
                     modalSelectedIndex = Math.min(modalWindows.length - 1, modalSelectedIndex + 1);
                     renderWindowList();
+                    return true;
+                case 'k':
+                    e.preventDefault();
+                    if (modalSelectedIndex > 0) {
+                        reorderWindow(modalSelectedIndex, modalSelectedIndex - 1);
+                    }
+                    return true;
+                case 'j':
+                    e.preventDefault();
+                    if (modalSelectedIndex < modalWindows.length - 1) {
+                        reorderWindow(modalSelectedIndex, modalSelectedIndex + 1);
+                    }
                     return true;
                 case 'PageUp':
                     e.preventDefault();
@@ -963,16 +1723,45 @@
             return false;
         }
 
-        async function createNewWindow() {
+        function createNewWindow() {
+            newWindowInput.value = '';
+            newWindowModal.classList.add('show');
+            // 50ms: the element is display:none until .show lands, and a synchronous
+            // focus would also be stolen by closeActionMenu()'s commandInput.focus().
+            setTimeout(() => { newWindowInput.focus(); }, 50);
+        }
+
+        function closeNewWindowModal() {
+            newWindowModal.classList.remove('show');
+            commandInput.focus();
+        }
+
+        const NEW_WINDOW_NAME_RE = /^[A-Za-z0-9._-]+$/;
+        async function submitNewWindow(name) {
+            name = (name || '').trim();
+            if (!name || !NEW_WINDOW_NAME_RE.test(name) || name.startsWith('-') || name === '.' || name === '..') {
+                showStatus('INVALID NAME', 'error');
+                newWindowModal.classList.add('show');
+                setTimeout(() => { newWindowInput.value = name; newWindowInput.focus(); }, 50);
+                return;
+            }
             try {
-                const response = await fetch('/api/new-window', { method: 'POST' });
+                const response = await fetch('/api/new-window-named', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name }),
+                });
                 const data = await response.json();
                 if (data.success && data.target) {
-                    await loadWindows();
-                    sessionSelect.value = data.target;
+                    // Select the new/switched window. Persist the target and blank the
+                    // live selection BEFORE re-rendering so renderWindowOptions()'s
+                    // keepTarget (= sessionSelect.value || savedTarget) falls through to
+                    // the new target. Otherwise a MASTER-named new window is filtered out
+                    // and the plain `sessionSelect.value = target` assignment no-ops.
                     localStorage.setItem('tmux-selected-target', data.target);
-                    startCapture();
-                    showStatus('NEW WINDOW: ' + data.target, 'success');
+                    sessionSelect.value = '';
+                    await loadWindows();
+                    showStatus((data.existing ? 'SWITCHED TO ' : 'NEW WINDOW: ') + name, 'success');
                     setTimeout(() => commandInput.focus(), 150);
                 } else {
                     showStatus(data.error || 'FAILED TO CREATE WINDOW', 'error');
@@ -988,6 +1777,10 @@
                 case 'c':
                     // Create new window
                     createNewWindow();
+                    return true;
+                case ',':
+                    // Rename window
+                    openRenameModal();
                     return true;
                 case 'w':
                     openWindowModal();
@@ -1009,6 +1802,11 @@
                         startCapture();
                         showStatus('PREV WINDOW', 'success');
                     }
+                    return true;
+                case 'r':
+                    // Refresh window list
+                    loadWindows();
+                    showStatus('REFRESHING...', 'success');
                     return true;
                 case '?':
                     openHelpModal();
@@ -1040,6 +1838,13 @@
             // Handle modal keys first
             if (handleModalKeydown(e)) return;
 
+            // Ctrl+R refreshes windows
+            if (e.ctrlKey && e.key === 'r') {
+                e.preventDefault();
+                loadWindows();
+                return;
+            }
+
             // Ctrl+C sends interrupt to tmux (if no text selection)
             if (e.ctrlKey && e.key === 'c') {
                 const selection = window.getSelection();
@@ -1067,7 +1872,45 @@
         });
 
         sendBtn.addEventListener('click', sendCommand);
-        refreshBtn.addEventListener('click', loadWindows);
+
+        // Action menu
+        function openActionMenu() {
+            // Label states the action the click performs, recomputed on every open
+            // so it cannot drift out of sync with stored state.
+            document.getElementById('menuToggleMasterLabel').textContent =
+                showMaster ? 'Hide MASTER' : 'Unhide MASTER';
+            actionMenuModal.classList.add('show');
+        }
+        function closeActionMenu() { actionMenuModal.classList.remove('show'); commandInput.focus(); }
+
+        menuBtn.addEventListener('click', openActionMenu);
+        actionMenuModal.addEventListener('click', (e) => {
+            if (e.target === actionMenuModal) closeActionMenu();
+        });
+
+        document.getElementById('menuNewWindow').addEventListener('click', () => { closeActionMenu(); createNewWindow(); });
+        document.getElementById('menuRenameWindow').addEventListener('click', () => { closeActionMenu(); openRenameModal(); });
+        document.getElementById('menuWindowList').addEventListener('click', () => { closeActionMenu(); openWindowModal(); });
+        document.getElementById('menuNextWindow').addEventListener('click', () => { closeActionMenu(); handlePrefixCommand('n'); });
+        document.getElementById('menuPrevWindow').addEventListener('click', () => { closeActionMenu(); handlePrefixCommand('p'); });
+        document.getElementById('menuRefresh').addEventListener('click', () => { closeActionMenu(); loadWindows(); });
+        document.getElementById('menuToggleMaster').addEventListener('click', () => {
+            closeActionMenu();
+            showMaster = !showMaster;
+            localStorage.setItem(SHOW_MASTER_KEY, String(showMaster));
+            renderWindowOptions();
+            showStatus(showMaster ? 'MASTER SHOWN' : 'MASTER HIDDEN', 'success');
+        });
+        document.getElementById('menuSendCtrlC').addEventListener('click', () => { closeActionMenu(); sendKeyToTmux('C-c'); });
+        document.getElementById('menuHelp').addEventListener('click', () => { closeActionMenu(); openHelpModal(); });
+        document.getElementById('menuLogout').addEventListener('click', () => {
+            closeActionMenu();
+            if (confirm('Log out of Cloudflare Access?')) {
+                // Cloudflare intercepts this same-origin path at the edge,
+                // clears the CF_Authorization session cookie, and shows its logout page.
+                window.location.href = '/cdn-cgi/access/logout';
+            }
+        });
         sessionSelect.addEventListener('change', () => {
             localStorage.setItem('tmux-selected-target', sessionSelect.value);
             startCapture();
@@ -1129,6 +1972,248 @@
         });
         helpModal.addEventListener('click', (e) => {
             if (e.target === helpModal) closeHelpModal();
+        });
+        renameModal.addEventListener('click', (e) => {
+            if (e.target === renameModal) closeRenameModal();
+        });
+        newWindowModal.addEventListener('click', (e) => {
+            if (e.target === newWindowModal) closeNewWindowModal();
+        });
+
+        // File viewer modal
+        const fileModal = document.getElementById('fileModal');
+        const fileModalContent = document.getElementById('fileModalContent');
+        const fileModalPath = document.getElementById('fileModalPath');
+
+        function syntaxHighlightJson(json) {
+            // Pretty-print then syntax highlight
+            const str = (typeof json === 'string') ? json : JSON.stringify(json, null, 2);
+            // Escape HTML first
+            const escaped = str
+                .replace(/&/g, '&amp;')
+                .replace(/</g, '&lt;')
+                .replace(/>/g, '&gt;');
+            // Highlight tokens
+            return escaped.replace(
+                /("(?:\\.|[^"\\])*")\s*:/g,
+                '<span class="json-key">$1</span>:'
+            ).replace(
+                /:\s*("(?:\\.|[^"\\])*")/g,
+                ': <span class="json-string">$1</span>'
+            ).replace(
+                /:\s*(\d+\.?\d*(?:[eE][+-]?\d+)?)/g,
+                ': <span class="json-number">$1</span>'
+            ).replace(
+                /:\s*(true|false)/g,
+                ': <span class="json-bool">$1</span>'
+            ).replace(
+                /:\s*(null)/g,
+                ': <span class="json-null">$1</span>'
+            ).replace(
+                /(?<=[\[,\s])("(?:\\.|[^"\\])*")(?=\s*[,\]])/g,
+                '<span class="json-string">$1</span>'
+            ).replace(
+                /(?<=[\[,\s])(\d+\.?\d*(?:[eE][+-]?\d+)?)(?=\s*[,\]])/g,
+                '<span class="json-number">$1</span>'
+            ).replace(
+                /(?<=[\[,\s])(true|false)(?=\s*[,\]])/g,
+                '<span class="json-bool">$1</span>'
+            ).replace(
+                /(?<=[\[,\s])(null)(?=\s*[,\]])/g,
+                '<span class="json-null">$1</span>'
+            );
+        }
+
+        async function openFileModal(filePath) {
+            fileModalPath.textContent = filePath;
+            fileModalContent.textContent = 'Loading...';
+            fileModal.classList.add('show');
+
+            try {
+                const response = await fetch('/api/serve-file?path=' + encodeURIComponent(filePath));
+                if (!response.ok) {
+                    fileModalContent.textContent = 'Error: ' + (await response.text());
+                    return;
+                }
+                const text = await response.text();
+                const ext = filePath.split('.').pop().toLowerCase();
+
+                if (ext === 'json') {
+                    try {
+                        const parsed = JSON.parse(text);
+                        fileModalContent.innerHTML = syntaxHighlightJson(parsed);
+                    } catch {
+                        // Invalid JSON, show raw with basic escaping
+                        fileModalContent.textContent = text;
+                    }
+                } else {
+                    fileModalContent.textContent = text;
+                }
+            } catch (err) {
+                fileModalContent.textContent = 'Failed to load file: ' + err.message;
+            }
+        }
+
+        function closeFileModal() {
+            fileModal.classList.remove('show');
+            fileModalContent.textContent = '';
+            commandInput.focus();
+        }
+
+        fileModal.addEventListener('click', (e) => {
+            if (e.target === fileModal) closeFileModal();
+        });
+
+        // Delegate click for file links in output
+        outputContent.addEventListener('click', (e) => {
+            const fileLink = e.target.closest('a.file-link');
+            if (fileLink) {
+                e.preventDefault();
+                const filePath = fileLink.dataset.filePath;
+                if (filePath) openFileModal(filePath);
+                return;
+            }
+        });
+
+        // Image preview modal
+        const imageModal = document.getElementById('imageModal');
+        const imageModalImg = document.getElementById('imageModalImg');
+        const imageModalPath = document.getElementById('imageModalPath');
+
+        function openImageModal(imagePath) {
+            imageModalPath.textContent = imagePath;
+            imageModalImg.src = '/api/serve-image?path=' + encodeURIComponent(imagePath);
+            imageModal.classList.add('show');
+        }
+
+        function closeImageModal() {
+            imageModal.classList.remove('show');
+            imageModalImg.src = '';
+            commandInput.focus();
+        }
+
+        imageModal.addEventListener('click', (e) => {
+            if (e.target === imageModal) closeImageModal();
+        });
+
+        // Delegate click for image links in output
+        outputContent.addEventListener('click', (e) => {
+            const link = e.target.closest('a.image-link');
+            if (link) {
+                e.preventDefault();
+                const imagePath = link.dataset.imagePath;
+                if (imagePath) openImageModal(imagePath);
+            }
+        });
+
+        // ---- File upload ----
+        const uploadBtn = document.getElementById('uploadBtn');
+        const fileInput = document.getElementById('fileInput');
+        const uploadModal = document.getElementById('uploadModal');
+        const uploadList = document.getElementById('uploadList');
+        const uploadTargetEl = document.getElementById('uploadTarget');
+        const uploadCloseBtn = document.getElementById('uploadClose');
+        const uploadAddMoreBtn = document.getElementById('uploadAddMore');
+        let uploadSeq = 0;
+
+        function openUploadPicker() {
+            // Reset so picking the same file again still fires a change event
+            fileInput.value = '';
+            fileInput.click();
+        }
+
+        function openUploadModal() {
+            uploadTargetEl.textContent = '→ ' + (sessionSelect.value || '0');
+            // Clear finished rows from earlier batches; keep any still uploading
+            uploadList.querySelectorAll('.upload-item.done, .upload-item.error').forEach(el => el.remove());
+            uploadModal.classList.add('show');
+        }
+
+        function closeUploadModal() {
+            uploadModal.classList.remove('show');
+            commandInput.focus();
+        }
+
+        function insertPathIntoInput(path) {
+            const cur = commandInput.value;
+            const sep = (cur && !cur.endsWith(' ')) ? ' ' : '';
+            // Shell-quote the path if it contains whitespace
+            const quoted = /\s/.test(path) ? `'${path.replace(/'/g, `'\\''`)}'` : path;
+            commandInput.value = cur + sep + quoted + ' ';
+        }
+
+        function uploadOneFile(file) {
+            const item = document.createElement('div');
+            item.className = 'upload-item uploading';
+            item.id = 'upload-' + (++uploadSeq);
+            item.innerHTML =
+                '<div class="upload-item-top">' +
+                    '<span class="upload-name"></span>' +
+                    '<span class="upload-pct">0%</span>' +
+                '</div>' +
+                '<div class="upload-bar"><div class="upload-bar-fill"></div></div>' +
+                '<div class="upload-status">UPLOADING…</div>';
+            // Untrusted filename goes in via textContent (no HTML injection)
+            item.querySelector('.upload-name').textContent = file.name;
+            uploadList.appendChild(item);
+
+            const pctEl = item.querySelector('.upload-pct');
+            const fillEl = item.querySelector('.upload-bar-fill');
+            const statusEl = item.querySelector('.upload-status');
+            const target = sessionSelect.value || '0';
+
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', '/api/upload?target=' + encodeURIComponent(target) +
+                             '&name=' + encodeURIComponent(file.name));
+
+            xhr.upload.addEventListener('progress', (e) => {
+                if (e.lengthComputable) {
+                    const pct = Math.round((e.loaded / e.total) * 100);
+                    pctEl.textContent = pct + '%';
+                    fillEl.style.width = pct + '%';
+                }
+            });
+
+            xhr.addEventListener('load', () => {
+                let data = {};
+                try { data = JSON.parse(xhr.responseText); } catch (_) {}
+                if (xhr.status >= 200 && xhr.status < 300 && data.success) {
+                    item.classList.remove('uploading');
+                    item.classList.add('done');
+                    pctEl.textContent = '100%';
+                    fillEl.style.width = '100%';
+                    statusEl.textContent = '→ ' + data.path;
+                    insertPathIntoInput(data.path);
+                    showStatus('UPLOADED ' + (data.name || file.name), 'success');
+                } else {
+                    item.classList.remove('uploading');
+                    item.classList.add('error');
+                    statusEl.textContent = data.error || ('FAILED (' + xhr.status + ')');
+                    showStatus('UPLOAD FAILED', 'error');
+                }
+            });
+
+            xhr.addEventListener('error', () => {
+                item.classList.remove('uploading');
+                item.classList.add('error');
+                statusEl.textContent = 'CONNECTION ERROR';
+                showStatus('UPLOAD FAILED', 'error');
+            });
+
+            xhr.send(file);
+        }
+
+        uploadBtn.addEventListener('click', openUploadPicker);
+        uploadAddMoreBtn.addEventListener('click', openUploadPicker);
+        uploadCloseBtn.addEventListener('click', closeUploadModal);
+        uploadModal.addEventListener('click', (e) => {
+            if (e.target === uploadModal) closeUploadModal();
+        });
+        fileInput.addEventListener('change', () => {
+            const files = Array.from(fileInput.files || []);
+            if (files.length === 0) return;
+            openUploadModal();
+            files.forEach(uploadOneFile);
         });
 
         // Load windows and focus input on load
