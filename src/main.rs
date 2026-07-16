@@ -335,6 +335,30 @@ async fn send_key(Json(payload): Json<SendKeyRequest>) -> impl IntoResponse {
     }
 }
 
+/// Validate a project/window name that will become a `~/p/<name>` directory and
+/// a tmux `-n <name>`. Allowlist only: letters, digits, '.', '_', '-'. This keeps
+/// the name out of every hazardous interpretation — shell metacharacters (it never
+/// enters a shell here), tmux format chars like '#' (interpolated by `-n`), path
+/// traversal, and tmux argv/flag injection (leading '-').
+fn validate_window_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("name cannot be empty".to_string());
+    }
+    if name == "." || name == ".." {
+        return Err("name cannot be '.' or '..'".to_string());
+    }
+    if name.starts_with('-') {
+        return Err("name cannot start with '-'".to_string());
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        return Err("name may contain only letters, digits, '.', '_', '-'".to_string());
+    }
+    Ok(())
+}
+
 async fn new_window() -> impl IntoResponse {
     // Create a new tmux window
     let result = Command::new("tmux")
@@ -1331,4 +1355,41 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_window_name;
+
+    #[test]
+    fn accepts_valid_names() {
+        for n in ["foo", "my-proj", "A2A", "3dmodels", "a.b_c-1", "MASTERtest", "x"] {
+            assert!(validate_window_name(n).is_ok(), "should accept {n:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_empty() {
+        assert!(validate_window_name("").is_err());
+    }
+
+    #[test]
+    fn rejects_dot_and_dotdot() {
+        assert!(validate_window_name(".").is_err());
+        assert!(validate_window_name("..").is_err());
+    }
+
+    #[test]
+    fn rejects_leading_dash() {
+        assert!(validate_window_name("-rf").is_err());
+        assert!(validate_window_name("-").is_err());
+    }
+
+    #[test]
+    fn rejects_shell_and_format_metachars() {
+        for n in ["foo bar", "foo;rm", "a#b", "a$(id)", "foo/bar", "back\\slash",
+                  "a`b`", "a:b", "a\tb", "a\nb", "qu'ote", "quo\"te"] {
+            assert!(validate_window_name(n).is_err(), "should reject {n:?}");
+        }
+    }
 }
