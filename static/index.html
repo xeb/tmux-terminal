@@ -1300,7 +1300,14 @@
 
         function renderWindowOptions() {
             const savedTarget = localStorage.getItem('tmux-selected-target');
-            const windows = visibleWindows(savedTarget);
+            // Visibility must prefer the live DOM selection over localStorage:
+            // the currently-viewed target may not be persisted yet (e.g. the
+            // fresh-load default selection), so falling back to savedTarget
+            // alone can let the actively-viewed window get hidden out from
+            // under the user. Read sessionSelect.value BEFORE innerHTML is
+            // wiped below, or it will already be empty.
+            const keepTarget = sessionSelect.value || savedTarget;
+            const windows = visibleWindows(keepTarget);
 
             sessionSelect.innerHTML = '';
 
@@ -1315,11 +1322,16 @@
                 const option = document.createElement('option');
                 option.value = win.target;
                 option.textContent = `${win.target} - ${win.name}`;
-                // Select saved target if it exists, otherwise default to first
+                // Select saved target if it exists, otherwise keep whatever is
+                // currently being viewed selected (it may never have been
+                // persisted — e.g. the fresh-load default), otherwise default
+                // to first.
                 if (savedTarget && win.target === savedTarget) {
                     option.selected = true;
                     foundSaved = true;
-                } else if (!savedTarget && index === 0) {
+                } else if (!savedTarget && keepTarget && win.target === keepTarget) {
+                    option.selected = true;
+                } else if (!savedTarget && !keepTarget && index === 0) {
                     option.selected = true;
                 }
                 sessionSelect.appendChild(option);
