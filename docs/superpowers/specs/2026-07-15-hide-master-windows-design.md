@@ -11,7 +11,10 @@ currently occupy slots in the window dropdown, the `^B w` window list, and the `
 navigation cycle. Most of the time they should be out of the way, but they must remain
 reachable on demand.
 
-At time of writing the session has two such windows: `0:2 alexa MASTER` and `0:6 sink MASTER`.
+The set of MASTER windows changes at runtime — during planning, a window named `mm DEV*` was
+renamed to `mm MASTER` between two listings minutes apart, and the non-MASTER count shifted from
+7 to 6 between test runs the same afternoon. Tests must therefore compute expected windows from
+`/api/windows` at run time and never hardcode names or counts.
 
 ## Behavior
 
@@ -60,13 +63,20 @@ client concern. `static/` is served with no-cache headers, so a browser refresh 
 
 The `sessionSelect` dropdown is the source of truth for every window surface in the web UI:
 
-- `openWindowModal()` (`static/index.html:1380`) builds `modalWindows` by mapping over
-  `sessionSelect.options`.
-- `handlePrefixCommand('n')` / `('p')` (`static/index.html:1687`, `:1696`) move
-  `sessionSelect.selectedIndex` within those same options.
+- `openWindowModal()` builds `modalWindows` by mapping over `sessionSelect.options`.
+- `handlePrefixCommand('n')` / `('p')` move `sessionSelect.selectedIndex` within those same options.
+- `reorderWindow()` derives real tmux indices from `win.target`, so reordering in the `^B w` modal
+  stays coherent across a hidden MASTER window.
+- `openRenameModal`, `captureOutput`, `sendCommand`, and the upload target all read
+  `sessionSelect.value`.
 
-Filtering what enters the dropdown therefore covers all three surfaces at once. No changes are
-needed in the modal or navigation code.
+`/api/windows` is fetched in exactly one place (`loadWindows()`); every other window surface derives
+from `sessionSelect`. Filtering what enters the dropdown therefore covers all surfaces at once. No
+changes are needed in the modal, navigation, or reorder code — confirmed empirically by
+`verify-task3.js` and by a whole-file audit during final review.
+
+(Line numbers are deliberately omitted here: this feature shifted them once already, and stale
+references mislead more than they help. Search for the identifiers instead.)
 
 ### Components
 
@@ -82,8 +92,14 @@ than `'true'` means hidden, so the default is hidden without seeding storage.
 
 **Menu toggle** — a new `.action-menu-item` with id `menuToggleMaster`, placed above
 `Refresh Windows` in the action menu list. Its click handler flips `showMaster`, persists it, calls
-`renderWindowOptions()`, and closes the menu. Its label is recomputed in `openActionMenu()` on
-every open, so it cannot drift out of sync with stored state.
+`renderWindowOptions()`, emits a `MASTER SHOWN` / `MASTER HIDDEN` status (deliberately overwriting
+the `N WINDOWS` message `renderWindowOptions()` just set), and closes the menu.
+
+Its label is recomputed in `openActionMenu()` on every open from the in-memory `showMaster`, so it
+cannot drift out of sync with **the rendered list**. Note this is not a guarantee about stored
+state across tabs: two tabs open, one toggling, leaves the other's label disagreeing with
+localStorage until reload. Each tab remains self-consistent with what it displays, which is what
+matters here.
 
 Toggling re-renders from `allWindows` with no refetch, so it is instant and works offline.
 
@@ -92,8 +108,23 @@ Toggling re-renders from `allWindows` with no refetch, so it is instant and work
 **Currently-selected MASTER window.** `renderWindowOptions()` always emits the currently selected
 target even when it is a MASTER window and MASTER windows are hidden. Hiding never changes which
 terminal is being viewed. The window drops off the list once the user switches away and the next
-render runs. On page load, the "currently selected target" is the value from
-`localStorage['tmux-selected-target']`.
+render runs.
+
+The "currently selected target" is `keepTarget = sessionSelect.value || localStorage['tmux-selected-target']`,
+read **before** the options are wiped. Both sources are required, and they are deliberately kept
+separate from `savedTarget`:
+
+- `sessionSelect.value` is the live selection but is empty on the very first render.
+- `localStorage['tmux-selected-target']` persists across reloads but is only written by the
+  `change` handler and explicit flows (`selectWindow`, create-window) — so the default-selected
+  window on a fresh load is **not** in it.
+
+Deriving `keepTarget` from localStorage alone is a bug, found in review: on a fresh load the
+default-selected window is unpersisted, so renaming the window you are currently viewing to include
+`MASTER` (which happens — see Problem) would filter it out and silently jump you to a different
+terminal, violating this very invariant. `savedTarget` must keep driving selection restore and the
+invalid-target fallback on its own; overwriting it with `sessionSelect.value` would break the
+clearing of stale localStorage entries.
 
 **Filter would empty the list.** If every window is a MASTER window and none is selected, the
 filter falls open and renders all windows rather than leaving a dead dropdown.
@@ -105,16 +136,37 @@ rendered list, selection falls back to the first option and the saved value is c
 
 ## Testing
 
-Manual verification against the live session, which contains both MASTER and non-MASTER windows:
+Automated verification drives the real app in a real browser via Playwright, installed in the
+session scratchpad only (no project dependency, honoring the no-build-step convention). Launch with
+`{ channel: 'chrome' }` — the cached Playwright browser build is older than the installed Playwright
+expects, so system chrome is used.
 
-1. Default state on a fresh load hides `alexa MASTER` and `sink MASTER`; the other seven windows appear.
-2. Menu reads `Unhide MASTER`; clicking it reveals both and the label becomes `Hide MASTER`.
+**Test against port 5534, never 5533.** Port 5533 is the live installed app at `~/bin/tmux-terminal/`
+(a systemd `--user` service) serving its *own* copy of `static/`; tests there would not exercise repo
+edits at all. A dev server on 5534, run from the repo root, serves the repo's `static/`
+(`ServeDir::new("static")` resolves relative to the working directory) and reflects edits with no
+restart and no rebuild.
+
+Tests must not create, rename, or kill tmux windows — that session is the user's live workspace.
+Page internals are driven via `page.evaluate` instead.
+
+Scripts: `verify-task1.js`, `verify-task2.js`, `verify-task3.js`, `verify-keeptarget.js`,
+`verify-task1-extra.js`.
+
+1. Default state on a fresh load hides every window whose name contains `MASTER`; all others appear.
+   Expected counts are derived from `/api/windows` at test time.
+2. Menu reads `Unhide MASTER`; clicking it reveals every MASTER window and the label becomes
+   `Hide MASTER`.
 3. Cycling `^B n` from the first window to the last never lands on a MASTER window while hidden.
 4. `^B w` modal lists only visible windows.
 5. Reloading the page preserves the toggle state.
-6. Selecting `alexa MASTER` while shown, then choosing `Hide MASTER`, keeps it listed and selected;
+6. Selecting a MASTER window while shown, then choosing `Hide MASTER`, keeps it listed and selected;
    switching to another window then removes it from the list.
-7. A window named `master` (lowercase) stays visible while hiding is on.
+7. A window named `master` (lowercase) stays visible while hiding is on; `MASTERMIND` is hidden.
+8. Viewing an unpersisted default-selected window that becomes MASTER keeps it listed and selected
+   (`verify-keeptarget.js` — the review finding above).
+9. With every window MASTER and none selected, the filter falls open and shows them all rather than
+   rendering an empty dropdown.
 
 ## Out of scope
 

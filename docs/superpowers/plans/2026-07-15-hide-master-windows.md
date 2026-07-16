@@ -12,7 +12,8 @@
 
 - **Only `static/index.html` may be modified.** No changes to `src/main.rs`, `mobile/`, `Cargo.toml`, or `package.json`.
 - **No new project dependencies and no build step.** Per CLAUDE.md: "Vanilla JS with inline CSS, no build step." The verification harness lives entirely in the scratchpad, outside the repo.
-- **Preserve the uncommitted Logout work** already present in `static/index.html` (the `.action-menu-item.menu-logout` CSS rule, the `#menuLogout` button, and its click handler). Do not revert, move, or reformat it. Commit only lines this plan adds.
+- **Do not touch the existing Logout code** in `static/index.html` (the `.action-menu-item.menu-logout` CSS rule, the `#menuLogout` button, and its click handler). It was committed separately in `5f4bbb0` before this work began. Do not revert, move, or reformat it.
+- **Work happens on branch `feature/hide-master-windows`**, branched from `5f4bbb0` on `master`.
 - **Detection string is the literal `MASTER`**, case-sensitive substring, matched against `win.name` only — never `win.target` or the composed option label.
 - **Default is hidden.** `localStorage['tmux-show-master']` absent means hidden.
 - **Existing behavior preserved:** the saved-target fallback (invalid saved target → select first, clear storage) and the `FAILED TO LOAD WINDOWS` error path must behave exactly as they do today.
@@ -29,7 +30,12 @@ Instead, verification drives the **real app in a real browser** via Playwright, 
 
 Playwright is already installed there and confirmed working. It must launch with `{ channel: 'chrome' }` — the cached Playwright browser build (1208) is older than what the installed Playwright expects (1228), so the system `google-chrome` is used instead. Do not run `npx playwright install`.
 
-The app must be reachable at `http://localhost:5533/`. It is currently served and returns 200. If it is not running, start it with `cargo run` from the repo root (note: the systemd service is `inactive`; something else is serving port 5533 — do not restart the service).
+**Test against port 5534, never 5533.** Port 5533 is the user's live installed app at `~/bin/tmux-terminal/` (a systemd `--user` service), which serves its OWN copy of `static/` — testing there would not exercise your edits at all. A dev server is already running on **5534** from the repo root, serving the repo's `static/` (`ServeDir::new("static")` resolves relative to the working directory). It picks up edits to `static/index.html` immediately, with no restart and no rebuild.
+
+If 5534 stops responding, restart it from the repo root with:
+`PORT=5534 nohup ./target/release/tmux-terminal > /tmp/devserver.log 2>&1 &`
+
+Never restart, stop, or `make update` the 5533 service — that is the user's live tool.
 
 **The live tmux session changes under you.** Between two listings during planning, a window named `mm DEV*` was renamed to `mm MASTER`. At plan time the session has 11 windows, 3 of them MASTER (`alexa MASTER`, `mm MASTER`, `sink MASTER`). **Never hardcode window counts or names in assertions** — always compute expected values from `/api/windows` at test time.
 
@@ -61,7 +67,7 @@ Create `<scratchpad>/verify-task1.js`:
 ```js
 const { chromium } = require('playwright');
 
-const APP = 'http://localhost:5533/';
+const APP = 'http://localhost:5534/';
 
 function isMaster(name) { return name.includes('MASTER'); }
 
@@ -217,11 +223,9 @@ Expected: exit 0, `PASS: N non-MASTER windows shown, M MASTER hidden`.
 
 - [ ] **Step 7: Commit**
 
-Stage only this file. The Logout changes are in the same file and must NOT be committed — use `git add -p` to stage only the hunks this task added, or verify with `git diff --cached` that no `menuLogout` lines are staged.
-
 ```bash
-git add -p static/index.html
-git diff --cached | grep -i logout && echo "STOP: logout staged, unstage it" || git commit -m "feat: hide MASTER tmux windows from web UI window list"
+git add static/index.html
+git commit -m "feat: hide MASTER tmux windows from web UI window list"
 ```
 
 ---
@@ -251,7 +255,7 @@ Create `<scratchpad>/verify-task2.js`:
 ```js
 const { chromium } = require('playwright');
 
-const APP = 'http://localhost:5533/';
+const APP = 'http://localhost:5534/';
 const LABEL = '#menuToggleMasterLabel';
 
 (async () => {
@@ -402,8 +406,8 @@ Expected: exit 0, still `PASS`.
 - [ ] **Step 8: Commit**
 
 ```bash
-git add -p static/index.html
-git diff --cached | grep -i logout && echo "STOP: logout staged, unstage it" || git commit -m "feat: add Unhide/Hide MASTER toggle to web UI menu"
+git add static/index.html
+git commit -m "feat: add Unhide/Hide MASTER toggle to web UI menu"
 ```
 
 ---
@@ -427,7 +431,7 @@ Create `<scratchpad>/verify-task3.js`:
 ```js
 const { chromium } = require('playwright');
 
-const APP = 'http://localhost:5533/';
+const APP = 'http://localhost:5534/';
 
 (async () => {
   const api = await (await fetch(APP + 'api/windows')).json();
@@ -528,8 +532,8 @@ If it fails, the choke-point assumption is wrong somewhere. Do not paper over it
 If Step 2 passed with no production changes, there is nothing to commit; skip this step. If a fix was required:
 
 ```bash
-git add -p static/index.html
-git diff --cached | grep -i logout && echo "STOP: logout staged, unstage it" || git commit -m "fix: ensure MASTER filter applies to window list modal and navigation"
+git add static/index.html
+git commit -m "fix: ensure MASTER filter applies to window list modal and navigation"
 ```
 
 ---
@@ -582,7 +586,7 @@ Manual verification against the live session, which contains both MASTER and non
 with:
 
 ```
-Automated verification drives the real app at `http://localhost:5533/` via Playwright, installed in
+Automated verification drives the real app at `http://localhost:5534/` via Playwright, installed in
 the session scratchpad only (no project dependency). Launch with `{ channel: 'chrome' }`; the cached
 Playwright browser build is older than the installed Playwright expects. Scripts: `verify-task1.js`,
 `verify-task2.js`, `verify-task3.js`.
@@ -604,4 +608,4 @@ git commit -m "docs: correct stale window counts in MASTER-hiding spec"
 - The preference survives a reload.
 - A MASTER window stays listed while it is the selected window, and drops off once you switch away.
 - `verify-task1.js`, `verify-task2.js`, and `verify-task3.js` all exit 0.
-- `git log` shows the feature commits; `git diff` still shows the untouched Logout work in the working tree.
+- The Logout menu entry still works and its code is byte-identical to `5f4bbb0`.
