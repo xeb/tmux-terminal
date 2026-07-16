@@ -1106,6 +1106,14 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="newWindowModal">
+        <div class="rename-modal">
+            <div class="modal-header">New Claude Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B c</span></div>
+            <input type="text" class="rename-input" id="newWindowInput" placeholder="Project name (a-z, 0-9, . _ -)" autocomplete="off" spellcheck="false">
+            <div class="rename-hint">Enter to create • Esc to cancel</div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="uploadModal">
         <div class="upload-modal">
             <div class="modal-header">UPLOAD <span class="upload-target" id="uploadTarget"></span></div>
@@ -1191,6 +1199,8 @@
         const helpModal = document.getElementById('helpModal');
         const renameModal = document.getElementById('renameModal');
         const renameInput = document.getElementById('renameInput');
+        const newWindowModal = document.getElementById('newWindowModal');
+        const newWindowInput = document.getElementById('newWindowInput');
 
         let captureInterval = null;
         let isFirstCapture = true;
@@ -1605,6 +1615,19 @@
                 return true;
             }
 
+            // Handle new-window prompt
+            if (newWindowModal.classList.contains('show')) {
+                if (e.key === 'Escape') { e.preventDefault(); closeNewWindowModal(); return true; }
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    const name = newWindowInput.value;
+                    closeNewWindowModal();
+                    submitNewWindow(name);
+                    return true;
+                }
+                return true; // consume all keys while the prompt is open
+            }
+
             // Handle rename modal
             if (renameModal.classList.contains('show')) {
                 if (e.key === 'Escape') {
@@ -1700,16 +1723,45 @@
             return false;
         }
 
-        async function createNewWindow() {
+        function createNewWindow() {
+            newWindowInput.value = '';
+            newWindowModal.classList.add('show');
+            // 50ms: the element is display:none until .show lands, and a synchronous
+            // focus would also be stolen by closeActionMenu()'s commandInput.focus().
+            setTimeout(() => { newWindowInput.focus(); }, 50);
+        }
+
+        function closeNewWindowModal() {
+            newWindowModal.classList.remove('show');
+            commandInput.focus();
+        }
+
+        const NEW_WINDOW_NAME_RE = /^[A-Za-z0-9._-]+$/;
+        async function submitNewWindow(name) {
+            name = (name || '').trim();
+            if (!name || !NEW_WINDOW_NAME_RE.test(name) || name.startsWith('-') || name === '.' || name === '..') {
+                showStatus('INVALID NAME', 'error');
+                newWindowModal.classList.add('show');
+                setTimeout(() => { newWindowInput.value = name; newWindowInput.focus(); }, 50);
+                return;
+            }
             try {
-                const response = await fetch('/api/new-window', { method: 'POST' });
+                const response = await fetch('/api/new-window-named', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ name }),
+                });
                 const data = await response.json();
                 if (data.success && data.target) {
-                    await loadWindows();
-                    sessionSelect.value = data.target;
+                    // Select the new/switched window. Persist the target and blank the
+                    // live selection BEFORE re-rendering so renderWindowOptions()'s
+                    // keepTarget (= sessionSelect.value || savedTarget) falls through to
+                    // the new target. Otherwise a MASTER-named new window is filtered out
+                    // and the plain `sessionSelect.value = target` assignment no-ops.
                     localStorage.setItem('tmux-selected-target', data.target);
-                    startCapture();
-                    showStatus('NEW WINDOW: ' + data.target, 'success');
+                    sessionSelect.value = '';
+                    await loadWindows();
+                    showStatus((data.existing ? 'SWITCHED TO ' : 'NEW WINDOW: ') + name, 'success');
                     setTimeout(() => commandInput.focus(), 150);
                 } else {
                     showStatus(data.error || 'FAILED TO CREATE WINDOW', 'error');
@@ -1923,6 +1975,9 @@
         });
         renameModal.addEventListener('click', (e) => {
             if (e.target === renameModal) closeRenameModal();
+        });
+        newWindowModal.addEventListener('click', (e) => {
+            if (e.target === newWindowModal) closeNewWindowModal();
         });
 
         // File viewer modal

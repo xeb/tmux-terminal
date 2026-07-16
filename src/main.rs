@@ -335,6 +335,30 @@ async fn send_key(Json(payload): Json<SendKeyRequest>) -> impl IntoResponse {
     }
 }
 
+/// Validate a project/window name that will become a `~/p/<name>` directory and
+/// a tmux `-n <name>`. Allowlist only: letters, digits, '.', '_', '-'. This keeps
+/// the name out of every hazardous interpretation — shell metacharacters (it never
+/// enters a shell here), tmux format chars like '#' (interpolated by `-n`), path
+/// traversal, and tmux argv/flag injection (leading '-').
+fn validate_window_name(name: &str) -> Result<(), String> {
+    if name.is_empty() {
+        return Err("name cannot be empty".to_string());
+    }
+    if name == "." || name == ".." {
+        return Err("name cannot be '.' or '..'".to_string());
+    }
+    if name.starts_with('-') {
+        return Err("name cannot start with '-'".to_string());
+    }
+    if !name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '_' || c == '-')
+    {
+        return Err("name may contain only letters, digits, '.', '_', '-'".to_string());
+    }
+    Ok(())
+}
+
 async fn new_window() -> impl IntoResponse {
     // Create a new tmux window
     let result = Command::new("tmux")
@@ -371,6 +395,132 @@ async fn new_window() -> impl IntoResponse {
             })),
         ),
     }
+}
+
+#[derive(Deserialize)]
+struct NewWindowNamedRequest {
+    name: String,
+}
+
+async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl IntoResponse {
+    let name = payload.name.trim().to_string();
+
+    if let Err(e) = validate_window_name(&name) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(serde_json::json!({"success": false, "error": e})),
+        );
+    }
+
+    // 1. Existing window with this exact name? Read-only — no select-window probe
+    //    (that would switch the user's active window as a side effect).
+    if let Ok(out) = Command::new("tmux")
+        .args([
+            "list-windows", "-a", "-F",
+            "#{window_id}\t#{window_name}\t#{session_name}:#{window_index}",
+        ])
+        .output()
+    {
+        if out.status.success() {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for line in stdout.lines() {
+                let parts: Vec<&str> = line.split('\t').collect();
+                if parts.len() == 3 && parts[1] == name {
+                    return (
+                        StatusCode::OK,
+                        Json(serde_json::json!({
+                            "success": true, "existing": true,
+                            "window_id": parts[0], "target": parts[2],
+                        })),
+                    );
+                }
+            }
+        }
+    }
+
+    // 2. Resolve ~/p/<name> and create it.
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let dir = format!("{}/p/{}", home, name);
+    if let Err(e) = std::fs::create_dir_all(&dir) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"success": false, "error": format!("mkdir failed: {}", e)})),
+        );
+    }
+
+    // 3. Create the window IN that dir. -n makes the name permanent; -P -F returns
+    //    the stable window_id (targeting by name would hit the oldest duplicate).
+    let create = Command::new("tmux")
+        .args([
+            "new-window", "-c", &dir, "-n", &name, "-P", "-F",
+            "#{window_id}\t#{session_name}:#{window_index}",
+        ])
+        .output();
+    let (window_id, target) = match create {
+        Ok(out) if out.status.success() => {
+            let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
+            let parts: Vec<&str> = s.split('\t').collect();
+            if parts.len() != 2 {
+                return (
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    Json(serde_json::json!({"success": false, "error": format!("unexpected new-window output: {}", s)})),
+                );
+            }
+            (parts[0].to_string(), parts[1].to_string())
+        }
+        Ok(out) => {
+            let stderr = String::from_utf8_lossy(&out.stderr);
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"success": false, "error": stderr.to_string()})),
+            );
+        }
+        Err(e) => {
+            return (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(serde_json::json!({"success": false, "error": format!("new-window failed: {}", e)})),
+            );
+        }
+    };
+
+    // 4. Verify the pane actually started in <dir> BEFORE launching claude --yolo
+    //    (which skips permission prompts). Never fire it in an unintended dir.
+    let expected = std::fs::canonicalize(&dir).unwrap_or_else(|_| std::path::PathBuf::from(&dir));
+    let actual = Command::new("tmux")
+        .args(["display-message", "-p", "-t", &window_id, "#{pane_current_path}"])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .unwrap_or_default();
+    let actual_canon =
+        std::fs::canonicalize(&actual).unwrap_or_else(|_| std::path::PathBuf::from(&actual));
+    if actual_canon != expected {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false,
+                "error": format!("window did not start in {} (got {})", dir, actual),
+                "window_id": window_id, "target": target,
+            })),
+        );
+    }
+
+    // 5. Launch. -l on the payload only; Enter is a separate send-keys.
+    let _ = Command::new("tmux")
+        .args(["send-keys", "-t", &window_id, "-l", "claude --yolo"])
+        .output();
+    let _ = Command::new("tmux")
+        .args(["send-keys", "-t", &window_id, "Enter"])
+        .output();
+
+    (
+        StatusCode::OK,
+        Json(serde_json::json!({
+            "success": true, "existing": false,
+            "window_id": window_id, "target": target,
+        })),
+    )
 }
 
 #[derive(Deserialize)]
@@ -1301,6 +1451,7 @@ async fn main() {
         .route("/api/capture", post(capture_pane))
         .route("/api/config", get(get_config))
         .route("/api/new-window", post(new_window))
+        .route("/api/new-window-named", post(new_window_named))
         .route("/api/rename-window", post(rename_window))
         .route("/api/move-window", post(move_window))
         .route("/api/speak", post(speak_output))
@@ -1331,4 +1482,41 @@ async fn main() {
 
     let listener = tokio::net::TcpListener::bind(&addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
+}
+
+#[cfg(test)]
+mod tests {
+    use super::validate_window_name;
+
+    #[test]
+    fn accepts_valid_names() {
+        for n in ["foo", "my-proj", "A2A", "3dmodels", "a.b_c-1", "MASTERtest", "x"] {
+            assert!(validate_window_name(n).is_ok(), "should accept {n:?}");
+        }
+    }
+
+    #[test]
+    fn rejects_empty() {
+        assert!(validate_window_name("").is_err());
+    }
+
+    #[test]
+    fn rejects_dot_and_dotdot() {
+        assert!(validate_window_name(".").is_err());
+        assert!(validate_window_name("..").is_err());
+    }
+
+    #[test]
+    fn rejects_leading_dash() {
+        assert!(validate_window_name("-rf").is_err());
+        assert!(validate_window_name("-").is_err());
+    }
+
+    #[test]
+    fn rejects_shell_and_format_metachars() {
+        for n in ["foo bar", "foo;rm", "a#b", "a$(id)", "foo/bar", "back\\slash",
+                  "a`b`", "a:b", "a\tb", "a\nb", "qu'ote", "quo\"te"] {
+            assert!(validate_window_name(n).is_err(), "should reject {n:?}");
+        }
+    }
 }
