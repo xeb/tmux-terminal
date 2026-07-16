@@ -63,13 +63,20 @@ client concern. `static/` is served with no-cache headers, so a browser refresh 
 
 The `sessionSelect` dropdown is the source of truth for every window surface in the web UI:
 
-- `openWindowModal()` (`static/index.html:1380`) builds `modalWindows` by mapping over
-  `sessionSelect.options`.
-- `handlePrefixCommand('n')` / `('p')` (`static/index.html:1687`, `:1696`) move
-  `sessionSelect.selectedIndex` within those same options.
+- `openWindowModal()` builds `modalWindows` by mapping over `sessionSelect.options`.
+- `handlePrefixCommand('n')` / `('p')` move `sessionSelect.selectedIndex` within those same options.
+- `reorderWindow()` derives real tmux indices from `win.target`, so reordering in the `^B w` modal
+  stays coherent across a hidden MASTER window.
+- `openRenameModal`, `captureOutput`, `sendCommand`, and the upload target all read
+  `sessionSelect.value`.
 
-Filtering what enters the dropdown therefore covers all three surfaces at once. No changes are
-needed in the modal or navigation code.
+`/api/windows` is fetched in exactly one place (`loadWindows()`); every other window surface derives
+from `sessionSelect`. Filtering what enters the dropdown therefore covers all surfaces at once. No
+changes are needed in the modal, navigation, or reorder code — confirmed empirically by
+`verify-task3.js` and by a whole-file audit during final review.
+
+(Line numbers are deliberately omitted here: this feature shifted them once already, and stale
+references mislead more than they help. Search for the identifiers instead.)
 
 ### Components
 
@@ -85,8 +92,14 @@ than `'true'` means hidden, so the default is hidden without seeding storage.
 
 **Menu toggle** — a new `.action-menu-item` with id `menuToggleMaster`, placed above
 `Refresh Windows` in the action menu list. Its click handler flips `showMaster`, persists it, calls
-`renderWindowOptions()`, and closes the menu. Its label is recomputed in `openActionMenu()` on
-every open, so it cannot drift out of sync with stored state.
+`renderWindowOptions()`, emits a `MASTER SHOWN` / `MASTER HIDDEN` status (deliberately overwriting
+the `N WINDOWS` message `renderWindowOptions()` just set), and closes the menu.
+
+Its label is recomputed in `openActionMenu()` on every open from the in-memory `showMaster`, so it
+cannot drift out of sync with **the rendered list**. Note this is not a guarantee about stored
+state across tabs: two tabs open, one toggling, leaves the other's label disagreeing with
+localStorage until reload. Each tab remains self-consistent with what it displays, which is what
+matters here.
 
 Toggling re-renders from `allWindows` with no refetch, so it is instant and works offline.
 

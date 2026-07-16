@@ -1311,6 +1311,11 @@
             // alone can let the actively-viewed window get hidden out from
             // under the user. Read sessionSelect.value BEFORE innerHTML is
             // wiped below, or it will already be empty.
+            //
+            // keepTarget (visibility) and savedTarget (selection restore) are
+            // separate on purpose, but they must stay in lockstep: every writer
+            // of the selection sets both synchronously. A writer that sets only
+            // one would render a stray unselected MASTER window.
             const keepTarget = sessionSelect.value || savedTarget;
             const windows = visibleWindows(keepTarget);
 
