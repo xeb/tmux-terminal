@@ -30,7 +30,12 @@ Instead, verification drives the **real app in a real browser** via Playwright, 
 
 Playwright is already installed there and confirmed working. It must launch with `{ channel: 'chrome' }` — the cached Playwright browser build (1208) is older than what the installed Playwright expects (1228), so the system `google-chrome` is used instead. Do not run `npx playwright install`.
 
-The app must be reachable at `http://localhost:5533/`. It is currently served and returns 200. If it is not running, start it with `cargo run` from the repo root (note: the systemd service is `inactive`; something else is serving port 5533 — do not restart the service).
+**Test against port 5534, never 5533.** Port 5533 is the user's live installed app at `~/bin/tmux-terminal/` (a systemd `--user` service), which serves its OWN copy of `static/` — testing there would not exercise your edits at all. A dev server is already running on **5534** from the repo root, serving the repo's `static/` (`ServeDir::new("static")` resolves relative to the working directory). It picks up edits to `static/index.html` immediately, with no restart and no rebuild.
+
+If 5534 stops responding, restart it from the repo root with:
+`PORT=5534 nohup ./target/release/tmux-terminal > /tmp/devserver.log 2>&1 &`
+
+Never restart, stop, or `make update` the 5533 service — that is the user's live tool.
 
 **The live tmux session changes under you.** Between two listings during planning, a window named `mm DEV*` was renamed to `mm MASTER`. At plan time the session has 11 windows, 3 of them MASTER (`alexa MASTER`, `mm MASTER`, `sink MASTER`). **Never hardcode window counts or names in assertions** — always compute expected values from `/api/windows` at test time.
 
@@ -62,7 +67,7 @@ Create `<scratchpad>/verify-task1.js`:
 ```js
 const { chromium } = require('playwright');
 
-const APP = 'http://localhost:5533/';
+const APP = 'http://localhost:5534/';
 
 function isMaster(name) { return name.includes('MASTER'); }
 
@@ -250,7 +255,7 @@ Create `<scratchpad>/verify-task2.js`:
 ```js
 const { chromium } = require('playwright');
 
-const APP = 'http://localhost:5533/';
+const APP = 'http://localhost:5534/';
 const LABEL = '#menuToggleMasterLabel';
 
 (async () => {
@@ -426,7 +431,7 @@ Create `<scratchpad>/verify-task3.js`:
 ```js
 const { chromium } = require('playwright');
 
-const APP = 'http://localhost:5533/';
+const APP = 'http://localhost:5534/';
 
 (async () => {
   const api = await (await fetch(APP + 'api/windows')).json();
@@ -581,7 +586,7 @@ Manual verification against the live session, which contains both MASTER and non
 with:
 
 ```
-Automated verification drives the real app at `http://localhost:5533/` via Playwright, installed in
+Automated verification drives the real app at `http://localhost:5534/` via Playwright, installed in
 the session scratchpad only (no project dependency). Launch with `{ channel: 'chrome' }`; the cached
 Playwright browser build is older than the installed Playwright expects. Scripts: `verify-task1.js`,
 `verify-task2.js`, `verify-task3.js`.
