@@ -1194,6 +1194,12 @@
         let modalSelectedIndex = 0;
         let modalWindows = [];
 
+        // MASTER window visibility. Windows whose tmux name contains "MASTER"
+        // are hidden by default; the ☰ MENU toggle reveals them.
+        const SHOW_MASTER_KEY = 'tmux-show-master';
+        let allWindows = [];
+        let showMaster = localStorage.getItem(SHOW_MASTER_KEY) === 'true';
+
         // Command history
         const HISTORY_KEY = 'tmux-command-history';
         const HISTORY_MAX = 100;
@@ -1277,49 +1283,70 @@
             captureInterval = setInterval(captureOutput, 1000);
         }
 
+        function isMasterWindow(win) {
+            return win.name.includes('MASTER');
+        }
+
+        // The currently selected target is always kept, even when it is a MASTER
+        // window, so hiding never switches the terminal being viewed. If the filter
+        // would empty the list entirely, fall open rather than leave a dead dropdown.
+        function visibleWindows(keepTarget) {
+            if (showMaster) return allWindows;
+            const visible = allWindows.filter(
+                win => !isMasterWindow(win) || win.target === keepTarget
+            );
+            return visible.length > 0 ? visible : allWindows;
+        }
+
+        function renderWindowOptions() {
+            const savedTarget = localStorage.getItem('tmux-selected-target');
+            const windows = visibleWindows(savedTarget);
+
+            sessionSelect.innerHTML = '';
+
+            if (windows.length === 0) {
+                sessionSelect.innerHTML = '<option value="">No windows found</option>';
+                return;
+            }
+
+            let foundSaved = false;
+
+            windows.forEach((win, index) => {
+                const option = document.createElement('option');
+                option.value = win.target;
+                option.textContent = `${win.target} - ${win.name}`;
+                // Select saved target if it exists, otherwise default to first
+                if (savedTarget && win.target === savedTarget) {
+                    option.selected = true;
+                    foundSaved = true;
+                } else if (!savedTarget && index === 0) {
+                    option.selected = true;
+                }
+                sessionSelect.appendChild(option);
+            });
+
+            // If saved target wasn't found, select first and clear invalid saved value
+            if (savedTarget && !foundSaved) {
+                sessionSelect.selectedIndex = 0;
+                localStorage.removeItem('tmux-selected-target');
+            }
+
+            startCapture();
+            showStatus(`${windows.length} WINDOWS`, 'success');
+        }
+
         async function loadWindows() {
             try {
                 const controller = new AbortController();
                 const timeout = setTimeout(() => controller.abort(), 5000);
                 const response = await fetch('/api/windows', { signal: controller.signal });
                 clearTimeout(timeout);
-                const windows = await response.json();
+                allWindows = await response.json();
 
-                sessionSelect.innerHTML = '';
-
-                if (windows.length === 0) {
-                    sessionSelect.innerHTML = '<option value="">No windows found</option>';
-                } else {
-                    const savedTarget = localStorage.getItem('tmux-selected-target');
-                    let foundSaved = false;
-
-                    windows.forEach((win, index) => {
-                        const option = document.createElement('option');
-                        option.value = win.target;
-                        option.textContent = `${win.target} - ${win.name}`;
-                        // Select saved target if it exists, otherwise default to first
-                        if (savedTarget && win.target === savedTarget) {
-                            option.selected = true;
-                            foundSaved = true;
-                        } else if (!savedTarget && index === 0) {
-                            option.selected = true;
-                        }
-                        sessionSelect.appendChild(option);
-                    });
-
-                    // If saved target wasn't found, select first and clear invalid saved value
-                    if (savedTarget && !foundSaved && windows.length > 0) {
-                        sessionSelect.selectedIndex = 0;
-                        localStorage.removeItem('tmux-selected-target');
-                    }
-
-                    startCapture();
-                    showStatus(`${windows.length} WINDOWS`, 'success');
-                }
+                renderWindowOptions();
             } catch (err) {
                 sessionSelect.innerHTML = '<option value="0">0 (default)</option>';
                 showStatus('FAILED TO LOAD WINDOWS', 'error');
-            } finally {
             }
         }
 
