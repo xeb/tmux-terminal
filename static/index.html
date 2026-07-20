@@ -827,8 +827,8 @@
             outline-offset: 1px;
         }
 
-        /* Upload (+) button — sits in the session bar next to MENU */
-        .upload-btn {
+        /* New window (+) button — sits in the session bar next to MENU */
+        .new-window-btn {
             font-size: 1.05rem;
             font-weight: 700;
             line-height: 1;
@@ -967,7 +967,7 @@
             <select class="session-select" id="sessionSelect">
                 <option value="">Loading...</option>
             </select>
-            <button class="menu-btn upload-btn" id="uploadBtn" title="Upload file" aria-label="Upload file">+</button>
+            <button class="menu-btn new-window-btn" id="newWindowBtn" title="New window" aria-label="New window">+</button>
             <button class="menu-btn" id="menuBtn">☰ MENU</button>
             <input type="file" id="fileInput" multiple hidden>
         </div>
@@ -1044,10 +1044,10 @@
         <div class="action-menu">
             <div class="modal-header">MENU</div>
             <div class="action-menu-list">
-                <button class="action-menu-item" id="menuNewWindow">
-                    <span class="action-icon">+</span>
-                    <span class="action-label">New Window</span>
-                    <span class="action-shortcut">^B c</span>
+                <button class="action-menu-item" id="menuUpload">
+                    <span class="action-icon">&#x21A5;</span>
+                    <span class="action-label">Upload</span>
+                    <span class="action-shortcut">Files</span>
                 </button>
                 <button class="action-menu-item" id="menuRenameWindow">
                     <span class="action-icon">,</span>
@@ -1884,11 +1884,12 @@
         function closeActionMenu() { actionMenuModal.classList.remove('show'); commandInput.focus(); }
 
         menuBtn.addEventListener('click', openActionMenu);
+        document.getElementById('newWindowBtn').addEventListener('click', createNewWindow);
         actionMenuModal.addEventListener('click', (e) => {
             if (e.target === actionMenuModal) closeActionMenu();
         });
 
-        document.getElementById('menuNewWindow').addEventListener('click', () => { closeActionMenu(); createNewWindow(); });
+        document.getElementById('menuUpload').addEventListener('click', () => { closeActionMenu(); openUploadPicker(); });
         document.getElementById('menuRenameWindow').addEventListener('click', () => { closeActionMenu(); openRenameModal(); });
         document.getElementById('menuWindowList').addEventListener('click', () => { closeActionMenu(); openWindowModal(); });
         document.getElementById('menuNextWindow').addEventListener('click', () => { closeActionMenu(); handlePrefixCommand('n'); });
@@ -2107,7 +2108,6 @@
         });
 
         // ---- File upload ----
-        const uploadBtn = document.getElementById('uploadBtn');
         const fileInput = document.getElementById('fileInput');
         const uploadModal = document.getElementById('uploadModal');
         const uploadList = document.getElementById('uploadList');
@@ -2203,7 +2203,6 @@
             xhr.send(file);
         }
 
-        uploadBtn.addEventListener('click', openUploadPicker);
         uploadAddMoreBtn.addEventListener('click', openUploadPicker);
         uploadCloseBtn.addEventListener('click', closeUploadModal);
         uploadModal.addEventListener('click', (e) => {
