@@ -463,7 +463,15 @@
             white-space: nowrap;
             flex-shrink: 0;
         }
-        .waiting-pill.show { display: flex; }
+        .waiting-pill.show { display: inline-flex; }
+
+        /* On a phone the bar has no room for the word, and a cut-off pill reads
+           as breakage. The dot and the count carry the meaning on their own. */
+        @media (max-width: 560px) {
+            .waiting-word { display: none; }
+            .session-label { display: none; }
+            .waiting-pill { padding: 2px 5px; }
+        }
 
         /* Session Input */
         .session-bar {
@@ -486,6 +494,8 @@
 
         .session-select {
             flex: 1;
+            /* Let the dropdown absorb the squeeze rather than the buttons. */
+            min-width: 0;
             background: var(--terminal-bg);
             border: 1px solid var(--matrix-dim);
             color: var(--matrix-green);
@@ -531,6 +541,10 @@
             align-items: center;
             gap: 5px;
             letter-spacing: 0.05em;
+            /* Without these the bar overflows once the waiting pill joins it:
+               the label wraps to two lines and the pill is cut off the edge. */
+            flex-shrink: 0;
+            white-space: nowrap;
         }
 
         .menu-btn:hover {
@@ -1579,6 +1593,12 @@
         let pickerRenderedFp = null;        // fingerprint the DOM was built for
         let cancelArmed = false;
         let textMode = false;               // the card is asking for typed text
+        // Guards against a second trigger landing before the first request
+        // returns. On a phone one gesture can raise two events -- the keyboard's
+        // return plus a tap on Send -- and without these the same reply is sent
+        // twice, because the field is only cleared after the await.
+        let sendingText = false;
+        let committing = false;
         let armedIndex = -1;                // touch: row awaiting a confirming second tap
         let pendingTargets = [];
 
@@ -1847,24 +1867,33 @@
         };
 
         async function sendPickerText() {
+            if (sendingText) return;
             const input = document.getElementById('pickerTextInput');
             if (!input) return;
-            const command = input.value.trim();
+            const text = input.value.trim();
             // The whole point of this mode is that Claude will not move until it
             // gets text, so an empty send is never what the user meant.
-            if (!command) { input.focus(); return; }
+            if (!text) { input.focus(); return; }
 
+            sendingText = true;
+            const btn = pickerCard.querySelector('.picker-text .picker-send');
+            if (btn) { btn.disabled = true; btn.textContent = 'Sending…'; }
             const target = sessionSelect.value;
             try {
-                await fetch('/api/send', {
+                // Not /api/send: that presses Enter three times, which a busy
+                // Claude can turn into a second submission of the same reply.
+                await fetch('/api/picker/text', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ command, session: target }),
+                    body: JSON.stringify({ target, text }),
                 });
                 showStatus('REPLY SENT', 'success');
             } catch (err) {
                 showStatus('SEND FAILED', 'error');
                 return;
+            } finally {
+                sendingText = false;
+                if (btn) { btn.disabled = false; btn.textContent = '⏎ Send'; }
             }
             input.value = '';
             exitTextMode();
@@ -1991,7 +2020,12 @@
         }
 
         async function commitPicker() {
-            if (!pickerData) return;
+            if (!pickerData || committing) return;
+            committing = true;
+            try { await commitPickerInner(); } finally { committing = false; }
+        }
+
+        async function commitPickerInner() {
             const target = sessionSelect.value;
             const st = pickerStateFor(target);
             const index = st.cursor;
@@ -2102,7 +2136,11 @@
             const others = pendingTargets.filter(t => t !== sessionSelect.value);
             waitingPill.classList.toggle('show', others.length > 0);
             if (others.length > 0) {
-                waitingPill.textContent = `● ${others.length} waiting`;
+                waitingPill.innerHTML =
+                    `● ${others.length} <span class="waiting-word">waiting</span>`;
+                waitingPill.title = others.length === 1
+                    ? '1 window is waiting on a question'
+                    : `${others.length} windows are waiting on a question`;
             }
             markPendingInDropdown();
         }

@@ -184,6 +184,23 @@ reading the code. Several overturn the obvious approach, so they are recorded he
   server polls briefly and reports `awaiting_text` if the prompt is still up with the cursor on the
   chosen row, `committed` otherwise.
 
+- **One gesture on a phone can raise two events.** The keyboard's return and a tap on Send both
+  reach the handler, and because the field was only cleared *after* the `await`, both read the same
+  text and both sent it — reproduced as two identical requests and two submissions in the pane.
+  Fixed with an in-flight guard on both the text send and the commit, plus a disabled button while
+  the request is out. The same class of bug applies to any async handler wired to more than one
+  event, which on touch is most of them.
+
+- **`/api/send` presses Enter three times.** Pre-existing, and reasonable for the EXECUTE button.
+  It is wrong for a reply typed into the card: the extra presses land in a TUI that queues input
+  while it is busy. The picker's text path uses its own endpoint that presses Enter once.
+
+- **The session bar overflows once the waiting pill joins it.** `.menu-btn` had neither
+  `flex-shrink: 0` nor `white-space: nowrap`, so on a phone the label wrapped to two lines and the
+  pill was clipped by the viewport edge. The dropdown also needed `min-width: 0` so it, rather than
+  the buttons, absorbs the squeeze. Below 560px the pill drops the word "waiting" and the `TARGET:`
+  label is hidden — a clipped pill reads as breakage, while a dot and a count do not.
+
 - **The preview pane only ever renders the focused option.** Stepping the cursor from A to B on a
   live window replaced the pane's contents entirely. The client therefore cannot move the
   highlight locally in this layout — there would be nothing to show. Preview prompts steer the
@@ -264,6 +281,11 @@ later without an API change.
 preview layout, where the client cannot move a highlight locally because only the focused option's
 preview exists. Same fingerprint guard.
 
+**`POST /api/picker/text`** — sends a typed reply as literal text plus **exactly one** Enter.
+Deliberately not `/api/send`, which presses Enter three times 500ms apart as a delivery workaround
+for the fire-and-forget EXECUTE button; those extra presses reach a TUI that queues input while
+busy (see Findings).
+
 **`GET /api/pending-questions`** — `["0:2", "0:8"]`. Runs `capture-pane -p` (visible pane only,
 no `-S`) per window and reports which ones `picker::parse` accepts. Polled at 3s.
 
@@ -330,7 +352,9 @@ The fixtures are masked. `list_gbc.txt` preserves the structure and line-wrap po
 repository is public.
 
 End-to-end behaviour is verified against live tmux windows rather than only fixtures — that is how
-the Enter-batching bug was found, and no unit test over captured text could have caught it. The
+the dropped-key and double-send bugs were found, and no unit test over captured text could have
+caught either. The double-send regression is pinned by driving a phone-sized viewport, firing the
+return key and a Send tap in the same tick, and asserting one request and one line in the pane. The
 browser flow is driven headless: card renders, focus is taken once, only the selected description
 expands, arrows and number keys move the highlight, `Esc` collapses without cancelling, switching
 windows preserves the highlight across a round trip, the waiting pill appears for other windows,

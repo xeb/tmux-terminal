@@ -303,6 +303,56 @@ async fn picker_step(Json(payload): Json<PickerStepRequest>) -> impl IntoRespons
     }
 }
 
+#[derive(Deserialize)]
+struct PickerTextRequest {
+    target: String,
+    text: String,
+}
+
+/// Send a typed reply for an option that asked for one.
+///
+/// Deliberately NOT `/api/send`, which presses Enter three times 500ms apart as
+/// a delivery workaround for the fire-and-forget EXECUTE button. Those extra
+/// presses land in a TUI that queues input while it is busy, and can resubmit
+/// what was already sent. Here exactly one Enter is pressed.
+async fn picker_text(Json(payload): Json<PickerTextRequest>) -> impl IntoResponse {
+    let text = payload.text.trim().to_string();
+    if text.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse { success: false, error: Some("empty reply".to_string()) }),
+        );
+    }
+
+    // Literal first, then Enter as its own invocation — `send-keys -l <s> Enter`
+    // would type the word "Enter".
+    if let Err(e) = send_keys_literal(&payload.target, &text) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse { success: false, error: Some(e) }),
+        );
+    }
+    match send_keys(&payload.target, &["Enter".to_string()]) {
+        Ok(()) => (StatusCode::OK, Json(ApiResponse { success: true, error: None })),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(ApiResponse { success: false, error: Some(e) }),
+        ),
+    }
+}
+
+fn send_keys_literal(target: &str, text: &str) -> Result<(), String> {
+    let output = Command::new("tmux")
+        .args(["send-keys", "-t", target, "-l", text])
+        .output()
+        .map_err(|e| format!("failed to send text: {}", e))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
 /// Targets of every window currently waiting on a prompt. This is what makes
 /// switching away from a question safe rather than merely permitted — without it
 /// you switch away and forget.
@@ -1705,6 +1755,7 @@ async fn main() {
         .route("/api/capture", post(capture_pane))
         .route("/api/picker/select", post(picker_select))
         .route("/api/picker/step", post(picker_step))
+        .route("/api/picker/text", post(picker_text))
         .route("/api/pending-questions", get(pending_questions))
         .route("/api/config", get(get_config))
         .route("/api/new-window", post(new_window))
