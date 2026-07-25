@@ -126,6 +126,11 @@ struct PickerActionResponse {
     /// on screen now.
     #[serde(skip_serializing_if = "Option::is_none")]
     picker: Option<picker::Picker>,
+    /// "committed" — the prompt is answered and gone.
+    /// "awaiting_text" — the prompt is still up with an inline field focused,
+    /// and will not move until text is typed into it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    outcome: Option<String>,
 }
 
 fn picker_conflict(reason: &str, current: Option<picker::Picker>) -> (StatusCode, Json<PickerActionResponse>) {
@@ -135,6 +140,7 @@ fn picker_conflict(reason: &str, current: Option<picker::Picker>) -> (StatusCode
             success: false,
             error: Some(reason.to_string()),
             picker: current,
+            outcome: None,
         }),
     )
 }
@@ -182,48 +188,99 @@ async fn picker_select(Json(payload): Json<PickerSelectRequest>) -> impl IntoRes
         return picker_conflict("no such option", Some(current));
     }
 
-    // Movement and Enter MUST be separate invocations. Batched as
-    // `send-keys Down Enter`, Claude Code's TUI applies the Enter against state
-    // that has not yet absorbed the Down, and commits the previously-focused
-    // option — verified against a live window. Arrows alone batch correctly.
-    if current.cursor != payload.index {
-        let moves = picker::move_keys(current.cursor, payload.index);
-        if let Err(e) = send_keys(&payload.target, &moves) {
+    // Prefer the option's own digit: one keystroke, no traversal, no race.
+    // Traversal is the fallback for rows Claude Code renders unnumbered.
+    if let Some(key) = picker::select_key(current.options[payload.index].number) {
+        if let Err(e) = send_keys(&payload.target, &[key]) {
             return (
                 StatusCode::BAD_REQUEST,
-                Json(PickerActionResponse { success: false, error: Some(e), picker: None }),
+                Json(PickerActionResponse { success: false, error: Some(e), picker: None, outcome: None }),
             );
         }
+    } else {
+        if let Err(e) = walk_cursor_to(&payload.target, &payload.fingerprint, current.cursor, payload.index).await {
+            return picker_conflict(&e, capture_visible(&payload.target).and_then(|p| picker::parse(&p)));
+        }
+        // Enter must be its own invocation. Batched with movement, Claude Code's
+        // TUI applies it against pre-move state and commits the wrong option.
+        if let Err(e) = send_keys(&payload.target, &["Enter".to_string()]) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(PickerActionResponse { success: false, error: Some(e), picker: None, outcome: None }),
+            );
+        }
+    }
 
-        // Confirm the cursor actually landed before committing. If it did not,
-        // nothing is pressed — a failed move can never answer the wrong option.
-        let mut landed = false;
-        for _ in 0..12 {
+    // What happened depends on the option. Most commit and the prompt goes away.
+    // "Type something." instead turns into an inline text field and the prompt
+    // stays up, waiting to be typed into. Decide by watching, not by guessing
+    // from the label.
+    let mut outcome = "committed";
+    for _ in 0..34 {
+        tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+        match capture_visible(&payload.target).and_then(|p| picker::parse(&p)) {
+            None => { outcome = "committed"; break }
+            Some(p) if p.fingerprint != payload.fingerprint => { outcome = "committed"; break }
+            Some(p) if p.cursor == payload.index => outcome = "awaiting_text",
+            Some(_) => {}
+        }
+    }
+
+    (
+        StatusCode::OK,
+        Json(PickerActionResponse {
+            success: true,
+            error: None,
+            picker: None,
+            outcome: Some(outcome.to_string()),
+        }),
+    )
+}
+
+/// Move the cursor one row at a time, waiting for each step to land before
+/// sending the next.
+///
+/// Fixed sleeps are not enough — arrows spaced 250ms apart were still dropped,
+/// while the same arrows spaced ~600ms apart all landed. Rather than tune a
+/// delay, wait on the condition. If a step never lands, the caller aborts
+/// without pressing Enter, so a failed move can never answer the wrong option.
+async fn walk_cursor_to(
+    target: &str,
+    fingerprint: &str,
+    from: usize,
+    to: usize,
+) -> Result<(), String> {
+    let mut at = from;
+    let mut guard = 0;
+    while at != to {
+        if guard > 64 {
+            return Err("could not move the cursor — nothing was sent".to_string());
+        }
+        guard += 1;
+
+        let key = picker::step_key(if to > at { 1 } else { -1 }).to_string();
+        send_keys(target, &[key])?;
+
+        let mut moved = false;
+        for _ in 0..25 {
             tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-            let settled = capture_visible(&payload.target).and_then(|p| picker::parse(&p));
-            if let Some(p) = settled {
-                if p.fingerprint == payload.fingerprint && p.cursor == payload.index {
-                    landed = true;
+            match capture_visible(target).and_then(|p| picker::parse(&p)) {
+                Some(p) if p.fingerprint == fingerprint && p.cursor != at => {
+                    at = p.cursor;
+                    moved = true;
                     break;
                 }
+                Some(p) if p.fingerprint != fingerprint => {
+                    return Err("the question changed".to_string())
+                }
+                _ => {}
             }
         }
-        if !landed {
-            let now = capture_visible(&payload.target).and_then(|p| picker::parse(&p));
-            return picker_conflict("could not move the cursor — nothing was sent", now);
+        if !moved {
+            return Err("could not move the cursor — nothing was sent".to_string());
         }
     }
-
-    match send_keys(&payload.target, &["Enter".to_string()]) {
-        Ok(()) => (
-            StatusCode::OK,
-            Json(PickerActionResponse { success: true, error: None, picker: None }),
-        ),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(PickerActionResponse { success: false, error: Some(e), picker: None }),
-        ),
-    }
+    Ok(())
 }
 
 /// Move the terminal's own cursor by one row without committing.
@@ -237,11 +294,11 @@ async fn picker_step(Json(payload): Json<PickerStepRequest>) -> impl IntoRespons
     match send_keys(&payload.target, &[key]) {
         Ok(()) => (
             StatusCode::OK,
-            Json(PickerActionResponse { success: true, error: None, picker: Some(current) }),
+            Json(PickerActionResponse { success: true, error: None, picker: Some(current), outcome: None }),
         ),
         Err(e) => (
             StatusCode::BAD_REQUEST,
-            Json(PickerActionResponse { success: false, error: Some(e), picker: None }),
+            Json(PickerActionResponse { success: false, error: Some(e), picker: None, outcome: None }),
         ),
     }
 }

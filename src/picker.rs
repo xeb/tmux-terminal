@@ -423,22 +423,6 @@ pub fn parse(pane: &str) -> Option<Picker> {
     })
 }
 
-/// The arrow keys that move the terminal's cursor from `from` to `to`. Never
-/// wraps: the direct path is always at most `len - 1` keys.
-///
-/// Enter is deliberately NOT included. Batched into the same `send-keys` call as
-/// the movement, Claude Code's TUI applies it against pre-move state and commits
-/// the wrong option. The caller sends it separately, after confirming the cursor
-/// landed.
-pub fn move_keys(from: usize, to: usize) -> Vec<String> {
-    let (key, n) = if to >= from {
-        ("Down", to - from)
-    } else {
-        ("Up", from - to)
-    };
-    std::iter::repeat(key.to_string()).take(n).collect()
-}
-
 /// The tmux key for a single step, used by the preview layout where the client
 /// must steer the real cursor to reveal another option's preview.
 pub fn step_key(delta: i32) -> &'static str {
@@ -446,6 +430,20 @@ pub fn step_key(delta: i32) -> &'static str {
         "Down"
     } else {
         "Up"
+    }
+}
+
+/// The digit key that selects an option outright, skipping cursor traversal.
+///
+/// This is the whole reason traversal is avoided: Claude Code's TUI drops rapid
+/// repeated arrow keys non-deterministically (sending 2, 3 and 4 batched `Down`s
+/// from the same start landed on rows 0, 1 and 4 respectively — verified live).
+/// A single digit has no such race, and selects regardless of where the cursor
+/// currently sits. Only 1–9 are reachable; anything else must traverse.
+pub fn select_key(number: Option<u32>) -> Option<String> {
+    match number {
+        Some(n) if (1..=9).contains(&n) => Some(n.to_string()),
+        _ => None,
     }
 }
 
@@ -562,19 +560,40 @@ mod tests {
     }
 
     #[test]
-    fn move_keys_go_the_right_way() {
-        let empty: Vec<String> = vec![];
-        assert_eq!(move_keys(0, 0), empty);
-        assert_eq!(move_keys(0, 2), vec!["Down", "Down"]);
-        assert_eq!(move_keys(3, 1), vec!["Up", "Up"]);
+    fn step_keys_go_the_right_way() {
+        assert_eq!(step_key(1), "Down");
+        assert_eq!(step_key(-1), "Up");
     }
 
     #[test]
-    fn move_keys_never_carry_enter() {
-        // Enter batched with movement commits the pre-move option. It is sent
-        // separately, after the cursor is confirmed to have landed.
-        for (a, b) in [(0, 5), (5, 0), (2, 3)] {
-            assert!(!move_keys(a, b).iter().any(|k| k == "Enter"));
+    fn numbered_options_select_by_digit() {
+        assert_eq!(select_key(Some(1)).as_deref(), Some("1"));
+        assert_eq!(select_key(Some(9)).as_deref(), Some("9"));
+    }
+
+    #[test]
+    fn unreachable_numbers_fall_back_to_traversal() {
+        // No digit key exists for these, so the caller must walk the cursor.
+        assert_eq!(select_key(None), None);
+        assert_eq!(select_key(Some(0)), None);
+        assert_eq!(select_key(Some(10)), None);
+    }
+
+    #[test]
+    fn every_list_option_is_reachable_by_digit() {
+        // The list layout numbers every row, including both escape hatches, so
+        // no traversal is needed there at all.
+        let p = parse(&fixture("list_gbc.txt")).unwrap();
+        for o in &p.options {
+            assert!(select_key(o.number).is_some(), "{:?} needs traversal", o.label);
         }
+    }
+
+    #[test]
+    fn preview_escape_hatch_needs_traversal() {
+        // The preview layout renders "Chat about this" without a number.
+        let p = parse(&fixture("preview_test.txt")).unwrap();
+        let meta = p.options.iter().find(|o| o.is_meta).unwrap();
+        assert_eq!(select_key(meta.number), None);
     }
 }

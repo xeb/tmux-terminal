@@ -43,8 +43,8 @@ shows the label list beside a monospace preview pane for the highlighted option,
 alignment in a `<pre>`. Below 760px the pane stacks under the option list rather than shrinking.
 
 Both layouts carry: the header chip (`☐ Choice mech`), the question, the option rows, a hairline
-above meta options (`Type something.`, `Chat about this`), and a footer bar whose primary button
-names the pending action (`⏎ Select 3`).
+above the escape hatch Claude Code prints below its own rule (`Chat about this`), and a footer bar
+whose primary button names the pending action (`⏎ Select 3`).
 
 ### Input
 
@@ -54,6 +54,7 @@ names the pending action (`⏎ Select 3`).
 | `1`–`9` | Jump to that numbered option. Highlights; does not commit. |
 | `Enter` | Commit the highlighted option. |
 | `Esc` | Collapse the card to a one-line bar. **Not** forwarded to tmux. |
+| Choosing an option that wants text | The card switches to a focused text box instead of closing. `Enter` sends, `Esc` abandons. An empty send does nothing. |
 | Click a row | Highlight it. A second click on the already-highlighted row commits. |
 | `Cancel ⎋` button | Sends a real `Escape` to tmux, after a click-again confirmation. |
 
@@ -89,11 +90,16 @@ window (see Findings — a live prompt is always on the visible pane, so no scro
 ### Committing
 
 The browser sends **intent, not keystrokes**. `Enter` posts the option index and the fingerprint
-of the prompt you were looking at. The server re-captures, re-parses, refuses on mismatch,
-computes the cursor delta fresh, and sends the keys — with no polling window in between.
+of the prompt you were looking at. The server re-captures, re-parses, refuses on mismatch, and then
+presses the option's own digit — a single keystroke that selects it regardless of where the
+terminal's cursor sits. Rows Claude Code renders without a number fall back to walking the cursor
+one verified step at a time. No polling window sits between any of it.
 
 If the fingerprint no longer matches, nothing is sent, the card reloads in a warning border, and
 you re-choose against the current prompt.
+
+Some options answer nothing and instead leave Claude waiting for typed text. The server reports
+which happened, and the card switches to a focused text box rather than closing — see Findings.
 
 ## Key findings that shaped this design
 
@@ -152,14 +158,31 @@ reading the code. Several overturn the obvious approach, so they are recorded he
 - **The page autofocuses the command textarea, where arrows move the caret.** Focus must be taken
   by the card, but only once per prompt — see Focus below.
 
-- **Arrows batch in one `send-keys`; Enter must not.** `send-keys -t X Down Down` moves two rows
-  correctly. But `send-keys -t X Down Enter` **commits the option that was focused before the
-  Down** — Claude Code's TUI applies the Enter against state that has not yet absorbed the arrow.
-  Verified against a live window: a commit of index 1 landed on index 0. So the commit is two
-  invocations, and between them the server **re-captures until the cursor is confirmed to have
-  landed**. If it never lands, Enter is never pressed, so a failed move cannot answer the wrong
-  option. This is a stronger guarantee than the fingerprint alone provides, and the fingerprint
-  could not have caught it.
+- **Rapid repeated keys are dropped non-deterministically, so the commit does not use arrows at
+  all.** From the same starting row, batched `send-keys Down` runs of 2, 3 and 4 landed on rows
+  0, 1 and 4 respectively. Even *individually* sent arrows spaced 250ms apart were dropped, while
+  the same arrows spaced ~600ms apart all landed. Batching Enter with movement is worse still: it
+  commits the option focused *before* the move.
+
+  **Pressing the option's own digit avoids all of it.** With the cursor on row 0, pressing `2`
+  selected the option numbered 2 outright — one keystroke, no traversal, no race, and independent
+  of where the cursor sits. The list layout numbers every row including both escape hatches, so
+  traversal is never needed there. Only the preview layout's unnumbered "Chat about this" falls
+  back to walking, and that walk sends **one arrow at a time and waits for each to land** before
+  the next — condition-based, not a tuned sleep. If a step never lands, Enter is never pressed, so
+  a failed move cannot answer the wrong option.
+
+- **Two options don't answer anything — they ask for text.** `Type something.` does not commit;
+  pressing its number turns the row into an inline text field and leaves the prompt up (the footer
+  gains `ctrl+g to edit in VS Code`). Typed characters replace the label, and Enter submits.
+  `Chat about this` does commit, but Claude then records *"User declined to answer questions"*,
+  asks a follow-up, and returns to the ordinary prompt waiting to be typed at. Either way the user
+  now owes Claude text, so the card must ask for it rather than closing and leaving them to work
+  that out.
+
+  The two are distinguished by **watching, not by matching the label**: after the keypress, the
+  server polls briefly and reports `awaiting_text` if the prompt is still up with the cursor on the
+  chosen row, `committed` otherwise.
 
 - **The preview pane only ever renders the focused option.** Stepping the cursor from A to B on a
   live window replaced the pane's contents entirely. The client therefore cannot move the
@@ -224,14 +247,16 @@ Additive and optional, so `mobile/src/api.ts` keeps working untouched.
 
 1. capture-pane -p -t <target>
 2. picker::parse — 409 Conflict if fingerprint differs or parse returns None
-3. send-keys -t <target> <Up|Down> ×|index − cursor|      (arrows only)
-4. re-capture until cursor == index, up to ~480ms
-5. send-keys -t <target> Enter                            (separate invocation)
+3. numbered row  -> send-keys <digit>            (one keystroke, done)
+   unnumbered    -> walk one arrow at a time, waiting for each to land,
+                    then send-keys Enter separately
+4. poll ~2s: prompt gone -> "committed"
+             prompt up, cursor on the row -> "awaiting_text"
 ```
 
-Steps 1–5 run back-to-back with no polling window between them. Enter is a separate call, and
-gated on step 4 confirming the move landed — batching it with the arrows commits the wrong option
-(see Findings). `target` is always explicit, never inferred from a notion of "current window" —
+Steps 1–4 run back-to-back with no polling window between them. The digit path exists because
+repeated arrows are dropped non-deterministically; the walk exists only for rows Claude Code
+renders without a number, and never presses Enter unless every step landed (see Findings). `target` is always explicit, never inferred from a notion of "current window" —
 that is what keeps window switching safe, and it leaves answering-from-the-badge cheap to add
 later without an API change.
 
@@ -280,6 +305,7 @@ the churn that killed the inline approach.
 | Prompt vanished (answered elsewhere) | 409, card disappears on the next poll. |
 | Parse fails / unfamiliar layout | No card. Terminal renders as today. No error shown. |
 | Cursor fails to reach the chosen row | Enter is never sent. 409 with the current prompt, card re-renders. |
+| Text-mode reply sent while the prompt is gone | Expected for `Chat about this` — the text goes to the ordinary prompt via `/api/send`. |
 | `send-keys` fails midway | Cursor may have moved, nothing committed. Next poll resyncs the card. Non-destructive. |
 | Window closed while a prompt was pending | Existing `window_closed` path runs; per-window state is dropped. |
 | `/api/pending-questions` fails | Waiting indicator hides. Never blocks the main capture. |

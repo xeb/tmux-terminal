@@ -390,6 +390,41 @@
         .picker-sync b { color: #0066cc; }
         .picker-sync.warn { color: #b3541e; }
 
+        /* Text entry. Some options ("Type something.", "Chat about this") do not
+           answer anything on their own — they put Claude in a state where it is
+           waiting to be typed at. The card asks for that text instead of closing
+           and leaving the user to work it out. */
+        .picker-text {
+            display: none;
+            flex-direction: column;
+            gap: 4px;
+            padding: 6px 8px 8px;
+        }
+        .picker.textmode .picker-text { display: flex; }
+        .picker.textmode .picker-body,
+        .picker.textmode .picker-foot { display: none; }
+
+        .picker-text-label {
+            font-size: 0.65rem;
+            color: var(--matrix-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+        }
+        .picker-text-input {
+            width: 100%;
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            color: var(--matrix-green);
+            font-family: inherit;
+            font-size: 0.85rem;
+            padding: 5px 6px;
+            outline: none;
+            resize: vertical;
+            min-height: 3.2em;
+        }
+        .picker-text-row { display: flex; gap: 6px; align-items: center; }
+        .picker-text-hint { font-size: 0.6rem; color: var(--matrix-dim); margin-left: auto; }
+
         /* Collapsed: never disappears while a question is pending. */
         .picker-bar {
             display: none;
@@ -1543,17 +1578,25 @@
         let pickerData = null;              // the picker for the viewed target
         let pickerRenderedFp = null;        // fingerprint the DOM was built for
         let cancelArmed = false;
+        let textMode = false;               // the card is asking for typed text
         let armedIndex = -1;                // touch: row awaiting a confirming second tap
         let pendingTargets = [];
 
         function pickerStateFor(target) {
             if (!pickerByTarget.has(target)) {
-                pickerByTarget.set(target, { cursor: 0, dirty: false, fingerprint: null, collapsed: false });
+                pickerByTarget.set(target, {
+                    cursor: 0, dirty: false, fingerprint: null, collapsed: false,
+                    // Text mode is per-target too: switching away from a card that
+                    // is asking for text must not silently drop the request, or
+                    // the draft already typed into it.
+                    textMode: false, textPrompt: '', draft: '',
+                });
             }
             return pickerByTarget.get(target);
         }
 
         function clearPicker() {
+            exitTextMode();
             pickerData = null;
             pickerRenderedFp = null;
             armedIndex = -1;
@@ -1564,6 +1607,15 @@
 
         // Called from captureOutput with whatever the server parsed.
         function updatePicker(target, data) {
+            // A card asking for text must outlive the prompt that produced it —
+            // "Chat about this" removes that prompt from the pane entirely, so
+            // polling would otherwise dismiss the request a second later.
+            const existing = pickerByTarget.get(target);
+            if (existing && existing.textMode) {
+                if (!textMode) showTextMode(target);
+                return;
+            }
+
             if (!data) {
                 if (pickerData) pickerByTarget.delete(target);
                 clearPicker();
@@ -1692,6 +1744,35 @@
                 body.appendChild(pv);
             }
 
+            const text = document.createElement('div');
+            text.className = 'picker-text';
+            const tlabel = document.createElement('div');
+            tlabel.className = 'picker-text-label';
+            tlabel.id = 'pickerTextLabel';
+            const tinput = document.createElement('textarea');
+            tinput.className = 'picker-text-input';
+            tinput.id = 'pickerTextInput';
+            tinput.rows = 2;
+            tinput.placeholder = 'Type your reply…';
+            tinput.addEventListener('keydown', (e) => {
+                e.stopPropagation();
+                if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendPickerText(); }
+                // An escape hatch out of the escape hatch: abandon the reply and
+                // hand back to the main command input.
+                else if (e.key === 'Escape') { e.preventDefault(); abandonTextMode(); }
+            });
+            const trow = document.createElement('div');
+            trow.className = 'picker-text-row';
+            const tsend = document.createElement('button');
+            tsend.className = 'picker-send';
+            tsend.textContent = '⏎ Send';
+            tsend.addEventListener('click', () => sendPickerText());
+            const thint = document.createElement('span');
+            thint.className = 'picker-text-hint';
+            thint.textContent = 'shift+⏎ for a newline';
+            trow.append(tsend, thint);
+            text.append(tlabel, tinput, trow);
+
             const foot = document.createElement('div');
             foot.className = 'picker-foot';
             const send = document.createElement('button');
@@ -1708,7 +1789,89 @@
             cancel.addEventListener('click', () => cancelPicker());
             foot.append(send, sync, cancel);
 
-            pickerCard.append(head, q, body, foot);
+            pickerCard.append(head, q, body, text, foot);
+        }
+
+        /* Text mode. Entered when the chosen option leaves Claude waiting to be
+           typed at rather than answering anything:
+             - "Type something." keeps the prompt up with an inline field focused
+               (the server reports outcome "awaiting_text"),
+             - "Chat about this" closes the prompt and Claude asks a follow-up.
+           Both come down to "send literal text, then Enter", so both are handled
+           the same way here. */
+        function enterTextMode(target, prompt) {
+            const st = pickerStateFor(target);
+            st.textMode = true;
+            st.textPrompt = prompt;
+            st.draft = '';
+            showTextMode(target);
+        }
+
+        // Paint text mode from stored state. Also the path back after a window
+        // switch, which is why the draft is restored rather than cleared.
+        function showTextMode(target) {
+            const st = pickerStateFor(target);
+            textMode = true;
+            if (pickerRenderedFp === null) {
+                buildPickerDom(pickerData || TEXT_ONLY_SHELL);
+                pickerRenderedFp = 'text-only';
+            }
+            pickerCard.classList.add('textmode', 'show');
+            pickerBar.classList.remove('show');
+            const label = document.getElementById('pickerTextLabel');
+            const input = document.getElementById('pickerTextInput');
+            if (label) label.textContent = st.textPrompt;
+            if (input) {
+                input.value = st.draft || '';
+                input.oninput = () => { st.draft = input.value; };
+                input.focus();
+            }
+        }
+
+        function exitTextMode() {
+            textMode = false;
+            pickerCard.classList.remove('textmode');
+        }
+
+        function abandonTextMode() {
+            pickerByTarget.delete(sessionSelect.value);
+            clearPicker();
+            commandInput.focus();
+        }
+
+        // Minimal picker shape so the card can still be built after the prompt
+        // it came from has left the pane.
+        const TEXT_ONLY_SHELL = {
+            fingerprint: 'text-only', header: 'Reply', question: '',
+            cursor: 0, layout: 'list', options: [],
+        };
+
+        async function sendPickerText() {
+            const input = document.getElementById('pickerTextInput');
+            if (!input) return;
+            const command = input.value.trim();
+            // The whole point of this mode is that Claude will not move until it
+            // gets text, so an empty send is never what the user meant.
+            if (!command) { input.focus(); return; }
+
+            const target = sessionSelect.value;
+            try {
+                await fetch('/api/send', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ command, session: target }),
+                });
+                showStatus('REPLY SENT', 'success');
+            } catch (err) {
+                showStatus('SEND FAILED', 'error');
+                return;
+            }
+            input.value = '';
+            exitTextMode();
+            pickerByTarget.delete(target);
+            clearPicker();
+            captureOutput();
+            setTimeout(captureOutput, 400);
         }
 
         function paintPicker(data, st) {
@@ -1851,6 +2014,21 @@
                     return;
                 }
                 if (!res.ok) { pickerWarn('send failed'); return; }
+                const body = await res.json().catch(() => ({}));
+
+                // Two options don't answer anything on their own — they leave
+                // Claude waiting for typed text. Ask for it here rather than
+                // closing the card and leaving the user to discover that.
+                const chosen = pickerData.options[index];
+                if (body.outcome === 'awaiting_text') {
+                    enterTextMode(target, 'Claude is waiting for your text');
+                    return;
+                }
+                if (chosen && chosen.is_meta) {
+                    enterTextMode(target, 'What do you want to say?');
+                    return;
+                }
+
                 pickerByTarget.delete(target);
                 showStatus('ANSWER SENT', 'success');
                 captureOutput();
