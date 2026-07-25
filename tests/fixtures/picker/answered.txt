@@ -1,0 +1,41 @@
+● Root cause confirmed with independent evidence. Taylor's real addresses appear all over Mark's mail:
+
+  - taylorb@northwind.net — he sent the complaint itself from this address
+  - taylor.brennermann@gmail.com — used by Dana and Joy in family threads
+
+  And taylorbtbn@gmail.com — the only Taylor address in the allowlist — appears in zero of 201 threads. It looks like it was guessed from the family tbn convention (danatbn@, philtbn@, joytbn@, elainetbn@
+  are all real), but Taylor doesn't use that pattern.
+
+  That explains the exact symptom: the gateway only emails a one-time PIN to addresses matching an allow policy. Non-matching addresses get the code-entry screen and silence — no error, no code. All three
+  addresses he tried were non-matching.
+
+  One address needs flagging: taylor@brennermman.com is a typo (brennermman vs brennermann) — the domain has no NS and no MX records. I won't allowlist it.
+
+  Since this gate is the only auth in front of a shell-capable agent over the production system, the membership change is yours to make:
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Allowlist
+
+Which addresses should I add to the "Northwind Ops" access group for Taylor?
+
+❯ 1. Both real ones, drop the bogus
+     Add taylor.brennermann@gmail.com (+ the dotless taylorbrennermann@gmail.com variant, same Google account, so SSO matches either way) and taylorb@northwind.net. Remove the unused taylorbtbn@gmail.com. Gives
+     him Google SSO on personal and one-time-PIN on work.
+  2. Both real ones, keep taylorbtbn@
+     Same additions, but leave taylorbtbn@gmail.com in place in case it's an account he does own and just didn't try.
+  3. Work address only
+     Add only taylorb@northwind.net. Most scoped to Northwind business — but northwind.net is Microsoft 365, not Google, so he'd be limited to the one-time-PIN path.
+  4. Personal Gmail only
+     Add only taylor.brennermann@gmail.com. Lets him use Sign in with Google, which avoids the emailed-code flow entirely.
+  5. Type something.
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  6. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel
+
+● Added taylor.brennermann@gmail.com, taylorbrennermann@gmail.com and taylorb@northwind.net to the
+  group, and removed taylorbtbn@gmail.com. Taylor should be able to sign in either way now.
+
+
+
+
+

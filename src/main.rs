@@ -1,3 +1,5 @@
+mod picker;
+
 use axum::{
     body::Bytes,
     extract::{DefaultBodyLimit, Json, State},
@@ -48,6 +50,10 @@ struct CaptureResponse {
     content: String,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     window_closed: bool,
+    /// A live Claude selection prompt at the tail of the pane, if there is one.
+    /// Optional and additive, so existing clients (including `mobile/`) ignore it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    picker: Option<picker::Picker>,
 }
 
 async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse {
@@ -66,13 +72,204 @@ async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse 
         Ok(output) => {
             if output.status.success() {
                 let content = String::from_utf8_lossy(&output.stdout).to_string();
-                (StatusCode::OK, Json(CaptureResponse { content, window_closed: false }))
+                // Parsed server-side and only here. If the client parsed too, the
+                // renderer and the committer would drift, and the failure mode is
+                // a card that shows one option and sends another.
+                let picker = picker::parse(&content);
+                (StatusCode::OK, Json(CaptureResponse { content, window_closed: false, picker }))
             } else {
-                (StatusCode::OK, Json(CaptureResponse { content: String::new(), window_closed: true }))
+                (StatusCode::OK, Json(CaptureResponse { content: String::new(), window_closed: true, picker: None }))
             }
         }
-        Err(_) => (StatusCode::OK, Json(CaptureResponse { content: String::new(), window_closed: true })),
+        Err(_) => (StatusCode::OK, Json(CaptureResponse { content: String::new(), window_closed: true, picker: None })),
     }
+}
+
+/// Capture only the visible pane — no scrollback. A live prompt is always on
+/// screen, so this is the cheapest possible probe.
+fn capture_visible(target: &str) -> Option<String> {
+    let output = Command::new("tmux")
+        .args(["capture-pane", "-p", "-t", target])
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).to_string())
+}
+
+#[derive(Deserialize)]
+struct PickerSelectRequest {
+    target: String,
+    /// Index into the option list. Addressed by index, never by printed number —
+    /// Claude Code renders some rows ("Chat about this") without one.
+    index: usize,
+    /// The prompt the client was looking at when the user chose.
+    fingerprint: String,
+}
+
+#[derive(Deserialize)]
+struct PickerStepRequest {
+    target: String,
+    /// -1 or +1. Used by the preview layout, where only the focused option's
+    /// preview is rendered, so the real cursor has to move to reveal another.
+    delta: i32,
+    fingerprint: String,
+}
+
+#[derive(Serialize)]
+struct PickerActionResponse {
+    success: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    error: Option<String>,
+    /// Returned on refusal so the client can re-render against what is actually
+    /// on screen now.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    picker: Option<picker::Picker>,
+}
+
+fn picker_conflict(reason: &str, current: Option<picker::Picker>) -> (StatusCode, Json<PickerActionResponse>) {
+    (
+        StatusCode::CONFLICT,
+        Json(PickerActionResponse {
+            success: false,
+            error: Some(reason.to_string()),
+            picker: current,
+        }),
+    )
+}
+
+/// Re-capture and re-parse, refusing if the prompt is not the one the client saw.
+fn verify_picker(
+    target: &str,
+    fingerprint: &str,
+) -> Result<picker::Picker, (StatusCode, Json<PickerActionResponse>)> {
+    let Some(pane) = capture_visible(target) else {
+        return Err(picker_conflict("window is gone", None));
+    };
+    let Some(current) = picker::parse(&pane) else {
+        return Err(picker_conflict("no prompt is waiting", None));
+    };
+    if current.fingerprint != fingerprint {
+        return Err(picker_conflict("the question changed", Some(current)));
+    }
+    Ok(current)
+}
+
+fn send_keys(target: &str, keys: &[String]) -> Result<(), String> {
+    let mut args: Vec<&str> = vec!["send-keys", "-t", target];
+    args.extend(keys.iter().map(|k| k.as_str()));
+    let output = Command::new("tmux")
+        .args(&args)
+        .output()
+        .map_err(|e| format!("failed to send keys: {}", e))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&output.stderr).to_string())
+    }
+}
+
+/// Commit a choice. The client sends intent, not keystrokes: the cursor delta is
+/// computed here from a fresh capture, so there is no polling window in which the
+/// terminal could move out from under it.
+async fn picker_select(Json(payload): Json<PickerSelectRequest>) -> impl IntoResponse {
+    let current = match verify_picker(&payload.target, &payload.fingerprint) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+    if payload.index >= current.options.len() {
+        return picker_conflict("no such option", Some(current));
+    }
+
+    // Movement and Enter MUST be separate invocations. Batched as
+    // `send-keys Down Enter`, Claude Code's TUI applies the Enter against state
+    // that has not yet absorbed the Down, and commits the previously-focused
+    // option — verified against a live window. Arrows alone batch correctly.
+    if current.cursor != payload.index {
+        let moves = picker::move_keys(current.cursor, payload.index);
+        if let Err(e) = send_keys(&payload.target, &moves) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(PickerActionResponse { success: false, error: Some(e), picker: None }),
+            );
+        }
+
+        // Confirm the cursor actually landed before committing. If it did not,
+        // nothing is pressed — a failed move can never answer the wrong option.
+        let mut landed = false;
+        for _ in 0..12 {
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            let settled = capture_visible(&payload.target).and_then(|p| picker::parse(&p));
+            if let Some(p) = settled {
+                if p.fingerprint == payload.fingerprint && p.cursor == payload.index {
+                    landed = true;
+                    break;
+                }
+            }
+        }
+        if !landed {
+            let now = capture_visible(&payload.target).and_then(|p| picker::parse(&p));
+            return picker_conflict("could not move the cursor — nothing was sent", now);
+        }
+    }
+
+    match send_keys(&payload.target, &["Enter".to_string()]) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(PickerActionResponse { success: true, error: None, picker: None }),
+        ),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(PickerActionResponse { success: false, error: Some(e), picker: None }),
+        ),
+    }
+}
+
+/// Move the terminal's own cursor by one row without committing.
+async fn picker_step(Json(payload): Json<PickerStepRequest>) -> impl IntoResponse {
+    let current = match verify_picker(&payload.target, &payload.fingerprint) {
+        Ok(p) => p,
+        Err(e) => return e,
+    };
+
+    let key = picker::step_key(payload.delta).to_string();
+    match send_keys(&payload.target, &[key]) {
+        Ok(()) => (
+            StatusCode::OK,
+            Json(PickerActionResponse { success: true, error: None, picker: Some(current) }),
+        ),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(PickerActionResponse { success: false, error: Some(e), picker: None }),
+        ),
+    }
+}
+
+/// Targets of every window currently waiting on a prompt. This is what makes
+/// switching away from a question safe rather than merely permitted — without it
+/// you switch away and forget.
+async fn pending_questions() -> impl IntoResponse {
+    let Ok(output) = Command::new("tmux")
+        .args(["list-windows", "-a", "-F", "#{session_name}:#{window_index}"])
+        .output()
+    else {
+        return (StatusCode::OK, Json(Vec::<String>::new()));
+    };
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let pending: Vec<String> = stdout
+        .lines()
+        .filter(|t| !t.trim().is_empty())
+        .filter(|t| {
+            capture_visible(t)
+                .and_then(|pane| picker::parse(&pane))
+                .is_some()
+        })
+        .map(|t| t.to_string())
+        .collect();
+
+    (StatusCode::OK, Json(pending))
 }
 
 async fn list_windows() -> impl IntoResponse {
@@ -1449,6 +1646,9 @@ async fn main() {
         .route("/api/send-key", post(send_key))
         .route("/api/windows", get(list_windows))
         .route("/api/capture", post(capture_pane))
+        .route("/api/picker/select", post(picker_select))
+        .route("/api/picker/step", post(picker_step))
+        .route("/api/pending-questions", get(pending_questions))
         .route("/api/config", get(get_config))
         .route("/api/new-window", post(new_window))
         .route("/api/new-window-named", post(new_window_named))

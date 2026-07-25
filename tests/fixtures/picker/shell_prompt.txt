@@ -1,0 +1,18 @@
+~/p/tmux-terminal on  master
+❯ cargo build --release
+   Compiling tmux-terminal v0.1.0 (/media/xeb/GreyArea/projects/tmux-terminal)
+    Finished `release` profile [optimized] target(s) in 12.44s
+
+~/p/tmux-terminal on  master
+❯ ./target/release/tmux-terminal
+Server running on http://0.0.0.0:5533
+
+❯ Please consider 3 different options for how a single choice is made in claude, and present me with three options: A B or C
+
+● I'll read this as: three candidate mechanisms for how Claude resolves a single decision point.
+
+
+
+
+
+

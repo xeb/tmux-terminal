@@ -1,0 +1,18 @@
+$ cargo test
+running 3 tests
+test picker::tests::parses_list_layout ... ok
+test picker::tests::parses_preview_layout ... ok
+test picker::tests::rejects_shell_prompt ... ok
+
+test result: ok. 3 passed; 0 failed; 0 ignored
+
+$ ls -1 docs/superpowers/specs
+  1. 2026-07-15-hide-master-windows-design.md
+  2. 2026-07-16-new-window-claude-project-design.md
+  3. 2026-07-25-claude-picker-design.md
+
+
+
+
+
+

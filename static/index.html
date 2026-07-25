@@ -206,6 +206,230 @@
             color: #ffffff;
         }
 
+        /* ── Claude picker ──────────────────────────────────────────────────
+           A live selection prompt in the pane, rendered as a real control. It is
+           a SIBLING of the output frame, never a child: .output-content has its
+           innerHTML replaced every second, which would destroy focus and state. */
+        .picker {
+            display: none;
+            flex-direction: column;
+            flex-shrink: 0;
+            border-bottom: 1px solid var(--matrix-dim);
+            background: var(--void);
+            outline: none;
+        }
+        .picker.show { display: flex; }
+        .picker:focus-visible { box-shadow: inset 0 0 0 2px #0066cc; }
+        .picker.stale { box-shadow: inset 0 0 0 2px #b3541e; }
+
+        .picker-head {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 3px 6px;
+            background: var(--terminal-bg);
+            border-bottom: 1px solid var(--matrix-dim);
+        }
+        .picker-chip {
+            font-size: 0.65rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            background: #cfe4fb;
+            color: #000;
+            padding: 1px 5px;
+            white-space: nowrap;
+        }
+        .picker-hint {
+            font-size: 0.6rem;
+            color: var(--matrix-dim);
+            letter-spacing: 0.06em;
+            margin-left: auto;
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+        .picker-collapse {
+            background: none;
+            border: 1px solid var(--matrix-dim);
+            color: var(--matrix-dim);
+            font-family: inherit;
+            font-size: 0.6rem;
+            padding: 1px 5px;
+            cursor: pointer;
+            flex-shrink: 0;
+        }
+
+        .picker-q {
+            padding: 6px 8px 2px;
+            font-size: 0.85rem;
+            font-weight: 500;
+            line-height: 1.35;
+        }
+
+        .picker-body { display: flex; gap: 8px; padding: 2px 0 4px; min-height: 0; }
+        .picker-body.has-preview { align-items: flex-start; }
+        .picker-opts { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+        .picker-body.has-preview .picker-opts { flex: 0 0 40%; }
+
+        .picker-preview {
+            flex: 1;
+            min-width: 0;
+            overflow-x: auto;
+            margin-right: 8px;
+            padding: 4px 6px;
+            border: 1px solid var(--matrix-dim);
+            background: var(--terminal-bg);
+            font-size: 0.6rem;
+            line-height: 1.15;
+            white-space: pre;
+            color: var(--matrix-green);
+        }
+        /* Below this width a side-by-side preview is unreadable, so it stacks. */
+        @media (max-width: 760px) {
+            .picker-body.has-preview { flex-direction: column; }
+            .picker-body.has-preview .picker-opts { flex: 1 1 auto; }
+            .picker-preview { margin: 0 8px; width: calc(100% - 16px); }
+        }
+
+        .picker-opt {
+            display: grid;
+            grid-template-columns: 3px 1.6rem 1fr;
+            gap: 0 5px;
+            align-items: start;
+            width: 100%;
+            border: 0;
+            background: none;
+            color: inherit;
+            font-family: inherit;
+            font-size: 0.8rem;
+            text-align: left;
+            padding: 2px 8px 2px 0;
+            cursor: pointer;
+        }
+        .picker-opt .bar { align-self: stretch; background: transparent; }
+        .picker-opt .num {
+            font-size: 0.7rem;
+            color: var(--matrix-dim);
+            text-align: right;
+            font-variant-numeric: tabular-nums;
+        }
+        .picker-opt[aria-selected="true"] { background: #eaf3fd; }
+        .picker-opt[aria-selected="true"] .bar { background: #0066cc; }
+        .picker-opt[aria-selected="true"] .num { color: #0066cc; font-weight: 700; }
+        .picker-opt[aria-selected="true"] .label { font-weight: 700; }
+        .picker-opt.armed .label { text-decoration: underline; }
+
+        /* Only the highlighted option shows its description. Six labels with one
+           paragraph under the cursor is a menu; six with six is the wall we had. */
+        .picker-desc {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 0.14s ease;
+        }
+        .picker-opt[aria-selected="true"] .picker-desc { grid-template-rows: 1fr; }
+        .picker-desc > span {
+            overflow: hidden;
+            display: block;
+            font-size: 0.7rem;
+            font-weight: 400;
+            line-height: 1.35;
+            color: var(--matrix-dim);
+        }
+        .picker-opt[aria-selected="true"] .picker-desc > span { padding-top: 2px; }
+        @media (prefers-reduced-motion: reduce) { .picker-desc { transition: none; } }
+
+        .picker-meta-rule {
+            height: 1px;
+            background: var(--matrix-dim);
+            opacity: 0.4;
+            margin: 3px 8px 3px calc(8px + 3px);
+        }
+        .picker-opt.meta .label { color: var(--matrix-dim); }
+
+        .picker-foot {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 6px;
+            border-top: 1px solid var(--matrix-dim);
+            background: var(--terminal-bg);
+        }
+        .picker-send {
+            background: var(--matrix-green);
+            color: var(--void);
+            border: 1px solid var(--matrix-green);
+            font-family: inherit;
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            padding: 4px 10px;
+            cursor: pointer;
+        }
+        .picker-cancel {
+            background: none;
+            border: 1px solid var(--matrix-dim);
+            color: var(--matrix-dim);
+            font-family: inherit;
+            font-size: 0.7rem;
+            padding: 4px 8px;
+            cursor: pointer;
+            margin-left: auto;
+        }
+        .picker-cancel.armed { color: #b3541e; border-color: #b3541e; }
+        .picker-sync {
+            font-size: 0.6rem;
+            color: var(--matrix-dim);
+            text-transform: uppercase;
+            letter-spacing: 0.08em;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+        .picker-sync b { color: #0066cc; }
+        .picker-sync.warn { color: #b3541e; }
+
+        /* Collapsed: never disappears while a question is pending. */
+        .picker-bar {
+            display: none;
+            align-items: center;
+            gap: 6px;
+            padding: 4px 6px;
+            background: var(--void);
+            border-bottom: 1px solid var(--matrix-dim);
+            border-left: 3px solid #0066cc;
+            font-size: 0.7rem;
+            cursor: pointer;
+            font-family: inherit;
+            color: inherit;
+            text-align: left;
+            width: 100%;
+            flex-shrink: 0;
+        }
+        .picker-bar.show { display: flex; }
+
+        /* Other windows waiting on a question. Without this you switch away and
+           forget, which is what makes switching away actually safe. */
+        .waiting-pill {
+            display: none;
+            align-items: center;
+            gap: 4px;
+            background: #cfe4fb;
+            border: 1px solid #0066cc;
+            color: #003a72;
+            font-family: inherit;
+            font-size: 0.62rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.06em;
+            padding: 2px 6px;
+            cursor: pointer;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+        .waiting-pill.show { display: flex; }
+
         /* Session Input */
         .session-bar {
             display: flex;
@@ -969,8 +1193,13 @@
             </select>
             <button class="menu-btn new-window-btn" id="newWindowBtn" title="New window" aria-label="New window">+</button>
             <button class="menu-btn" id="menuBtn">☰ MENU</button>
+            <button class="waiting-pill" id="waitingPill" title="Jump to a window waiting on a question"></button>
             <input type="file" id="fileInput" multiple hidden>
         </div>
+
+        <button class="picker-bar" id="pickerBar"></button>
+
+        <div class="picker" id="pickerCard" tabindex="-1" role="listbox"></div>
 
         <div class="terminal-frame input-frame">
             <textarea
@@ -1272,6 +1501,13 @@
                     return;
                 }
 
+                // Before the early returns below: an unchanged pane still needs
+                // the picker applied on first render. Guarded on target because
+                // the user may have switched windows while this was in flight.
+                if (sessionSelect.value === target) {
+                    updatePicker(target, data.picker || null);
+                }
+
                 if (data.content) {
                     // Skip update if content unchanged or user is selecting text
                     if (data.content === outputContent.textContent) return;
@@ -1291,6 +1527,424 @@
                 // Silent fail for polling
             }
         }
+
+        /* ── Claude picker ──────────────────────────────────────────────────
+           Renders a live selection prompt as a keyboard-driven control.
+
+           State is per tmux target, so switching windows never commits, cancels,
+           or loses your place. Come back and your highlight is still there, as
+           long as the prompt itself has not changed underneath you. */
+        const pickerCard = document.getElementById('pickerCard');
+        const pickerBar = document.getElementById('pickerBar');
+        const waitingPill = document.getElementById('waitingPill');
+
+        const pickerByTarget = new Map();   // target -> {cursor, dirty, fingerprint, collapsed}
+        const focusedPrompts = new Set();   // `${target}|${fingerprint}` already focused once
+        let pickerData = null;              // the picker for the viewed target
+        let pickerRenderedFp = null;        // fingerprint the DOM was built for
+        let cancelArmed = false;
+        let armedIndex = -1;                // touch: row awaiting a confirming second tap
+        let pendingTargets = [];
+
+        function pickerStateFor(target) {
+            if (!pickerByTarget.has(target)) {
+                pickerByTarget.set(target, { cursor: 0, dirty: false, fingerprint: null, collapsed: false });
+            }
+            return pickerByTarget.get(target);
+        }
+
+        function clearPicker() {
+            pickerData = null;
+            pickerRenderedFp = null;
+            armedIndex = -1;
+            cancelArmed = false;
+            pickerCard.classList.remove('show', 'stale');
+            pickerBar.classList.remove('show');
+        }
+
+        // Called from captureOutput with whatever the server parsed.
+        function updatePicker(target, data) {
+            if (!data) {
+                if (pickerData) pickerByTarget.delete(target);
+                clearPicker();
+                return;
+            }
+
+            const st = pickerStateFor(target);
+            const changed = st.fingerprint !== data.fingerprint;
+            if (changed) {
+                // A different question. Drop any local highlight — it referred to
+                // options that no longer exist.
+                st.fingerprint = data.fingerprint;
+                st.cursor = data.cursor;
+                st.dirty = false;
+                st.collapsed = false;
+            }
+
+            // The preview layout renders only the focused option's preview, so
+            // the client cannot move the highlight locally — it steers the real
+            // cursor and follows. Mirroring is therefore mandatory here.
+            if (data.layout === 'preview') st.dirty = false;
+
+            // Mirror the terminal until the user takes over.
+            if (!st.dirty) st.cursor = data.cursor;
+            if (st.cursor >= data.options.length) st.cursor = data.cursor;
+
+            pickerData = data;
+            renderPicker(target);
+
+            // Focus exactly once per prompt. Re-focusing on every poll would
+            // fight the user the moment they clicked back into the textarea.
+            const key = `${target}|${data.fingerprint}`;
+            if (!focusedPrompts.has(key) && !st.collapsed) {
+                focusedPrompts.add(key);
+                pickerCard.focus({ preventScroll: true });
+            }
+        }
+
+        function renderPicker(target) {
+            const data = pickerData;
+            const st = pickerStateFor(target);
+            if (!data) return;
+
+            if (st.collapsed) {
+                pickerCard.classList.remove('show');
+                pickerBar.classList.add('show');
+                pickerBar.textContent = `▸ Question pending — ${data.header || 'choose'} · ${data.options.length} options`;
+                return;
+            }
+            pickerBar.classList.remove('show');
+            pickerCard.classList.add('show');
+
+            if (pickerRenderedFp !== data.fingerprint) {
+                buildPickerDom(data);
+                pickerRenderedFp = data.fingerprint;
+            }
+            paintPicker(data, st);
+        }
+
+        function buildPickerDom(data) {
+            pickerCard.innerHTML = '';
+
+            const head = document.createElement('div');
+            head.className = 'picker-head';
+            const chip = document.createElement('span');
+            chip.className = 'picker-chip';
+            chip.textContent = data.header || 'Choose';
+            const hint = document.createElement('span');
+            hint.className = 'picker-hint';
+            hint.textContent = '↑↓ move · ⏎ select · esc hide';
+            const collapse = document.createElement('button');
+            collapse.className = 'picker-collapse';
+            collapse.textContent = '⌄';
+            collapse.title = 'Hide (Esc)';
+            collapse.addEventListener('click', () => collapsePicker());
+            head.append(chip, hint, collapse);
+
+            const q = document.createElement('div');
+            q.className = 'picker-q';
+            q.textContent = data.question;
+
+            const body = document.createElement('div');
+            body.className = 'picker-body' + (data.preview ? ' has-preview' : '');
+            const opts = document.createElement('div');
+            opts.className = 'picker-opts';
+            body.appendChild(opts);
+
+            data.options.forEach((o, i) => {
+                if (o.is_meta && (i === 0 || !data.options[i - 1].is_meta)) {
+                    const rule = document.createElement('div');
+                    rule.className = 'picker-meta-rule';
+                    opts.appendChild(rule);
+                }
+                const b = document.createElement('button');
+                b.type = 'button';
+                b.className = 'picker-opt' + (o.is_meta ? ' meta' : '');
+                b.setAttribute('role', 'option');
+                b.dataset.idx = String(i);
+
+                const bar = document.createElement('span');
+                bar.className = 'bar';
+                const num = document.createElement('span');
+                num.className = 'num';
+                num.textContent = o.number != null ? o.number + '.' : '·';
+                const label = document.createElement('span');
+                label.className = 'label';
+                label.append(document.createTextNode(o.label));
+                if (o.description) {
+                    const d = document.createElement('span');
+                    d.className = 'picker-desc';
+                    const inner = document.createElement('span');
+                    inner.textContent = o.description;
+                    d.appendChild(inner);
+                    label.appendChild(d);
+                }
+                b.append(bar, num, label);
+                b.addEventListener('click', () => onOptionClick(i));
+                opts.appendChild(b);
+            });
+
+            if (data.preview) {
+                const pv = document.createElement('pre');
+                pv.className = 'picker-preview';
+                pv.id = 'pickerPreview';
+                pv.textContent = data.preview;
+                body.appendChild(pv);
+            }
+
+            const foot = document.createElement('div');
+            foot.className = 'picker-foot';
+            const send = document.createElement('button');
+            send.className = 'picker-send';
+            send.id = 'pickerSend';
+            send.addEventListener('click', () => commitPicker());
+            const sync = document.createElement('span');
+            sync.className = 'picker-sync';
+            sync.id = 'pickerSync';
+            const cancel = document.createElement('button');
+            cancel.className = 'picker-cancel';
+            cancel.id = 'pickerCancel';
+            cancel.textContent = 'Cancel ⎋';
+            cancel.addEventListener('click', () => cancelPicker());
+            foot.append(send, sync, cancel);
+
+            pickerCard.append(head, q, body, foot);
+        }
+
+        function paintPicker(data, st) {
+            const rows = pickerCard.querySelectorAll('.picker-opt');
+            rows.forEach((r, i) => {
+                r.setAttribute('aria-selected', i === st.cursor ? 'true' : 'false');
+                r.classList.toggle('armed', i === armedIndex && i !== st.cursor);
+            });
+
+            const send = document.getElementById('pickerSend');
+            if (send) {
+                const o = data.options[st.cursor];
+                const n = o && o.number != null ? o.number : st.cursor + 1;
+                send.textContent = `⏎ Select ${n}`;
+            }
+
+            const pv = document.getElementById('pickerPreview');
+            if (pv && data.preview) pv.textContent = data.preview;
+
+            const sync = document.getElementById('pickerSync');
+            if (sync) {
+                sync.classList.remove('warn');
+                if (document.activeElement === commandInput) {
+                    sync.textContent = '↑↓ inactive — click card';
+                } else if (data.layout === 'preview') {
+                    sync.textContent = 'steering terminal';
+                } else if (st.dirty) {
+                    sync.innerHTML = '<b>local</b>';
+                } else {
+                    sync.textContent = 'mirroring';
+                }
+            }
+        }
+
+        function pickerWarn(msg) {
+            const sync = document.getElementById('pickerSync');
+            if (sync) {
+                sync.textContent = msg;
+                sync.classList.add('warn');
+            }
+        }
+
+        function movePicker(delta) {
+            if (!pickerData) return;
+            const target = sessionSelect.value;
+            const st = pickerStateFor(target);
+            armedIndex = -1;
+
+            if (pickerData.layout === 'preview') {
+                // Only the focused option's preview exists, so move the real
+                // cursor and let the next capture bring the new pane back.
+                stepPicker(delta);
+                return;
+            }
+
+            const n = pickerData.options.length;
+            st.cursor = (st.cursor + delta + n) % n;
+            st.dirty = true;
+            paintPicker(pickerData, st);
+        }
+
+        function jumpPicker(number) {
+            if (!pickerData) return;
+            const idx = pickerData.options.findIndex(o => o.number === number);
+            if (idx < 0) return;
+            const st = pickerStateFor(sessionSelect.value);
+            if (pickerData.layout === 'preview') {
+                stepPicker(idx - st.cursor, Math.abs(idx - st.cursor));
+                return;
+            }
+            st.cursor = idx;
+            st.dirty = true;
+            armedIndex = -1;
+            paintPicker(pickerData, st);
+        }
+
+        async function stepPicker(delta, repeat) {
+            if (!pickerData || delta === 0) return;
+            const target = sessionSelect.value;
+            const fingerprint = pickerData.fingerprint;
+            const times = repeat || 1;
+            try {
+                for (let i = 0; i < times; i++) {
+                    const res = await fetch('/api/picker/step', {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ target, delta: delta > 0 ? 1 : -1, fingerprint }),
+                    });
+                    if (!res.ok) { pickerWarn('question changed'); break; }
+                }
+            } catch (err) {
+                pickerWarn('connection error');
+            }
+            // Don't wait a full second to see the result of your own keypress.
+            captureOutput();
+            setTimeout(captureOutput, 250);
+        }
+
+        function onOptionClick(i) {
+            if (!pickerData) return;
+            pickerCard.focus({ preventScroll: true });
+            const st = pickerStateFor(sessionSelect.value);
+
+            // Touch: first tap reads, second tap commits. Prevents an accidental
+            // answer from a stray thumb on a phone.
+            if (st.cursor === i && armedIndex === i) { commitPicker(); return; }
+
+            if (pickerData.layout === 'preview') {
+                armedIndex = i;
+                stepPicker(i - st.cursor, Math.abs(i - st.cursor));
+                return;
+            }
+            st.cursor = i;
+            st.dirty = true;
+            armedIndex = i;
+            paintPicker(pickerData, st);
+        }
+
+        async function commitPicker() {
+            if (!pickerData) return;
+            const target = sessionSelect.value;
+            const st = pickerStateFor(target);
+            const index = st.cursor;
+            const fingerprint = pickerData.fingerprint;
+
+            try {
+                const res = await fetch('/api/picker/select', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target, index, fingerprint }),
+                });
+                if (res.status === 409) {
+                    // The prompt moved between render and commit. Nothing was
+                    // sent; re-render against what is actually on screen.
+                    pickerCard.classList.add('stale');
+                    pickerWarn('question changed — re-choose');
+                    pickerByTarget.delete(target);
+                    setTimeout(() => pickerCard.classList.remove('stale'), 2000);
+                    captureOutput();
+                    return;
+                }
+                if (!res.ok) { pickerWarn('send failed'); return; }
+                pickerByTarget.delete(target);
+                showStatus('ANSWER SENT', 'success');
+                captureOutput();
+                setTimeout(captureOutput, 300);
+            } catch (err) {
+                pickerWarn('connection error');
+            }
+        }
+
+        function collapsePicker() {
+            if (!pickerData) return;
+            pickerStateFor(sessionSelect.value).collapsed = true;
+            renderPicker(sessionSelect.value);
+            commandInput.focus();
+        }
+
+        function expandPicker() {
+            if (!pickerData) return;
+            pickerStateFor(sessionSelect.value).collapsed = false;
+            renderPicker(sessionSelect.value);
+            pickerCard.focus({ preventScroll: true });
+        }
+
+        // Esc collapses the card; dismissing Claude's question is a separate,
+        // confirmed action. The two differ too much in consequence to share a key.
+        function cancelPicker() {
+            const btn = document.getElementById('pickerCancel');
+            if (!cancelArmed) {
+                cancelArmed = true;
+                if (btn) { btn.textContent = 'Sure? ⎋'; btn.classList.add('armed'); }
+                pickerWarn('sends Esc to Claude — click again');
+                setTimeout(() => {
+                    cancelArmed = false;
+                    if (btn) { btn.textContent = 'Cancel ⎋'; btn.classList.remove('armed'); }
+                }, 4000);
+                return;
+            }
+            cancelArmed = false;
+            if (btn) { btn.textContent = 'Cancel ⎋'; btn.classList.remove('armed'); }
+            pickerByTarget.delete(sessionSelect.value);
+            sendKeyToTmux('Escape');
+            captureOutput();
+        }
+
+        pickerBar.addEventListener('click', expandPicker);
+
+        pickerCard.addEventListener('keydown', (e) => {
+            if (!pickerData) return;
+            if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); e.stopPropagation(); movePicker(1); }
+            else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); e.stopPropagation(); movePicker(-1); }
+            else if (e.key === 'Enter') { e.preventDefault(); e.stopPropagation(); commitPicker(); }
+            else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); collapsePicker(); }
+            else if (/^[1-9]$/.test(e.key)) { e.preventDefault(); e.stopPropagation(); jumpPicker(Number(e.key)); }
+        });
+
+        // Repaint the sync line when focus moves between the card and the input.
+        commandInput.addEventListener('focus', () => {
+            if (pickerData) paintPicker(pickerData, pickerStateFor(sessionSelect.value));
+        });
+        pickerCard.addEventListener('focus', () => {
+            if (pickerData) paintPicker(pickerData, pickerStateFor(sessionSelect.value));
+        });
+
+        async function refreshPendingQuestions() {
+            try {
+                const res = await fetch('/api/pending-questions');
+                pendingTargets = await res.json();
+            } catch (err) {
+                pendingTargets = [];
+            }
+            const others = pendingTargets.filter(t => t !== sessionSelect.value);
+            waitingPill.classList.toggle('show', others.length > 0);
+            if (others.length > 0) {
+                waitingPill.textContent = `● ${others.length} waiting`;
+            }
+            markPendingInDropdown();
+        }
+
+        function markPendingInDropdown() {
+            for (const opt of sessionSelect.options) {
+                const marked = opt.textContent.endsWith(' ●');
+                const should = pendingTargets.includes(opt.value);
+                if (should && !marked) opt.textContent += ' ●';
+                else if (!should && marked) opt.textContent = opt.textContent.slice(0, -2);
+            }
+        }
+
+        waitingPill.addEventListener('click', () => {
+            const others = pendingTargets.filter(t => t !== sessionSelect.value);
+            if (others.length === 0) return;
+            sessionSelect.value = others[0];
+            localStorage.setItem('tmux-selected-target', others[0]);
+            startCapture();
+        });
 
         function startCapture() {
             if (captureInterval) clearInterval(captureInterval);
@@ -1364,6 +2018,7 @@
             }
 
             startCapture();
+            markPendingInDropdown();
             showStatus(`${windows.length} WINDOWS`, 'success');
         }
 
@@ -1914,8 +2569,15 @@
         });
         sessionSelect.addEventListener('change', () => {
             localStorage.setItem('tmux-selected-target', sessionSelect.value);
+            // Switching windows must not commit, cancel, or discard anything —
+            // per-window picker state is left exactly as it was. Clear only the
+            // view, which the next capture repopulates for the new target.
+            clearPicker();
             startCapture();
-            setTimeout(() => commandInput.focus(), 500);
+            refreshPendingQuestions();
+            // Don't yank focus back to the textarea if the new window turns out
+            // to have a question waiting; updatePicker claims focus for that.
+            setTimeout(() => { if (!pickerData) commandInput.focus(); }, 500);
         });
 
         commandInput.addEventListener('keydown', (e) => {
@@ -2218,6 +2880,11 @@
         // Load windows and focus input on load
         loadWindows();
         commandInput.focus();
+
+        // Which other windows are waiting on a question. Slower than the main
+        // capture — it probes every window, and the answer rarely changes.
+        refreshPendingQuestions();
+        setInterval(refreshPendingQuestions, 3000);
     </script>
 </body>
 </html>

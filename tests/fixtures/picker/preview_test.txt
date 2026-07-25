@@ -1,0 +1,70 @@
+claude --yolo
+xeb@not-invented-here:~/p/test$ claude --yolo
+╭─── Claude Code v2.1.220 ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╮
+│                                                    │ Tips for getting started                                                                                               │
+│                 Welcome back Mark!                 │ Run /init to create a CLAUDE.md file with instructions for Claude                                                      │
+│                                                    │ ────────────────────────────────────────────────────────────────────────────────────────────────────────────────────── │
+│                       ▐▛███▜▌                      │ What's new                                                                                                             │
+│                      ▝▜█████▛▘                     │ Bug fixes and reliability improvements                                                                                 │
+│                        ▘▘ ▝▝                       │ Added Claude Opus 5 (`claude-opus-5`), now the default Opus model — 1M context, fast mode at $10/$50 per Mtok          │
+│ Opus 5 (1M context) with xhig… · Claude Max · Mark │ Added `sandbox.network.strictAllowlist` setting to deny non-allowlisted hosts for sandboxed commands without prompting │
+│ Kockerbeck                                         │ /release-notes for more                                                                                                │
+│         /media/xeb/GreyArea/projects/test          │                                                                                                                        │
+╰─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+
+❯ Please consider 3 different options for how a single choice is made in claude, and present me with three options: A B or C
+
+● I'll read this as: three candidate mechanisms for how Claude resolves a single decision point, presented as A / B / C.
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+ ☐ Choice mech
+
+How should a single choice be made in Claude?
+
+❯ 1. A — Interactive prompt       ┌──────────────────────────────────────────────┐
+  2. B — Default and proceed      │ A) INTERACTIVE PROMPT                        │
+  3. C — Options in prose         │                                              │
+                                  │   ┌─ Which auth method? ──────────┐          │
+                                  │   │ ▸ OAuth (Recommended)        │           │
+                                  │   │   API key                    │           │
+                                  │   │   Session cookie             │           │
+                                  │   │   Other…                     │           │
+                                  │   └───────────────────────────────┘          │
+                                  │                                              │
+                                  │   who decides : user                         │
+                                  │   latency     : blocks until answered        │
+                                  │   best when   : answers diverge materially   │
+                                  │   cost        : one round-trip per choice    │
+                                  └──────────────────────────────────────────────┘
+
+                                  Notes: press n to add notes
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  Chat about this
+
+Enter to select · ↑/↓ to navigate · n to add notes · Esc to cancel
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
