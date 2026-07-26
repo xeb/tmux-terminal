@@ -1,0 +1,19 @@
+✻ Brewed for 3s
+
+❯ One more time: the same fruit question via AskUserQuestion.
+─────────────────────────────────────────────────────────────────────────────────
+ ☐ Fruit
+
+Which fruit do you prefer?
+
+4 1. Apple
+     Apple
+  2. Banana
+     Banana
+  3. Cherry
+     Cherry
+  4. Type something.
+─────────────────────────────────────────────────────────────────────────────────
+  5. Chat about this
+
+Enter to select · ↑/↓ to navigate · Esc to cancel

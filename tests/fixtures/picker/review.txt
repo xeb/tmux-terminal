@@ -1,0 +1,22 @@
+● Banana.
+
+✻ Crunched for 8s
+
+❯ Now use AskUserQuestion ONCE with TWO questions: Q1 header Fruit "Which
+  fruit?" options Apple, Banana. Q2 header Color "Which color?" options Red,
+  Blue. Just ask and wait.
+
+─────────────────────────────────────────────────────────────────────────────────
+←  ☒ Fruit  ☒ Color  ✔ Submit  →
+
+Review your answers
+
+ ● Which fruit?
+   → Apple
+ ● Which color?
+   → Blue
+
+Ready to submit your answers?
+
+❯ 1. Submit answers
+  2. Cancel

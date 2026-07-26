@@ -85,11 +85,14 @@ async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse 
     }
 }
 
-/// Capture only the visible pane — no scrollback. A live prompt is always on
-/// screen, so this is the cheapest possible probe.
+/// Capture the pane with a bounded slice of scrollback. Visible-only capture
+/// is not enough: a prompt taller than the window (narrow panes, long option
+/// descriptions) pushes its own top rule into scrollback, and a capture that
+/// cannot see the top rule cannot parse the prompt — every select then fails
+/// with a false "no prompt is waiting".
 fn capture_visible(target: &str) -> Option<String> {
     let output = Command::new("tmux")
-        .args(["capture-pane", "-p", "-t", target])
+        .args(["capture-pane", "-p", "-t", target, "-S", "-200"])
         .output()
         .ok()?;
     if !output.status.success() {
@@ -122,13 +125,17 @@ struct PickerActionResponse {
     success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     error: Option<String>,
-    /// Returned on refusal so the client can re-render against what is actually
-    /// on screen now.
+    /// On refusal: what is actually on screen now, so the client can re-render.
+    /// On outcome "changed": the prompt the keystroke produced (next question
+    /// of a set, toggled checkbox, review screen), for the same reason.
     #[serde(skip_serializing_if = "Option::is_none")]
     picker: Option<picker::Picker>,
     /// "committed" — the prompt is answered and gone.
-    /// "awaiting_text" — the prompt is still up with an inline field focused,
-    /// and will not move until text is typed into it.
+    /// "awaiting_text" — the dialog's free-text buffer is open; it will not
+    /// move until text is typed into it.
+    /// "changed" — a different prompt is on screen now; `picker` carries it.
+    /// "pending" — the keystroke was sent but no effect was observed yet; the
+    /// client should keep the card and let polling reconcile.
     #[serde(skip_serializing_if = "Option::is_none")]
     outcome: Option<String>,
 }
@@ -189,8 +196,18 @@ async fn picker_select(Json(payload): Json<PickerSelectRequest>) -> impl IntoRes
     }
 
     // Prefer the option's own digit: one keystroke, no traversal, no race.
-    // Traversal is the fallback for rows Claude Code renders unnumbered.
-    if let Some(key) = picker::select_key(current.options[payload.index].number) {
+    // Never for the rows Claude Code adds around the tool's options — their
+    // printed digits are display-only, and pressing one types the digit into
+    // the dialog's free-text buffer (verified live on 2.1.220: the buffer then
+    // eats even arrow keys as literal escape bytes). Those rows, and anything
+    // unnumbered, are reached by walking the cursor and pressing Enter.
+    let chosen = &current.options[payload.index];
+    let digit = if picker::is_input_row(chosen) {
+        None
+    } else {
+        picker::select_key(chosen.number)
+    };
+    if let Some(key) = digit {
         if let Err(e) = send_keys(&payload.target, &[key]) {
             return (
                 StatusCode::BAD_REQUEST,
@@ -211,17 +228,34 @@ async fn picker_select(Json(payload): Json<PickerSelectRequest>) -> impl IntoRes
         }
     }
 
-    // What happened depends on the option. Most commit and the prompt goes away.
-    // "Type something." instead turns into an inline text field and the prompt
-    // stays up, waiting to be typed into. Decide by watching, not by guessing
-    // from the label.
-    let mut outcome = "committed";
+    // Watch for evidence of what the keystroke did, and report only what was
+    // seen. The previous version inferred "awaiting_text" from the prompt
+    // still being on screen after a timeout — but the TUI's render can lag its
+    // state by seconds on a loaded session, so a slow redraw of a committed
+    // answer was reported as "Claude wants text". Timeouts are not evidence.
+    //
+    //   prompt gone, chrome gone   -> committed
+    //   prompt gone, chrome still  -> awaiting_text (free-text buffer is open)
+    //   different prompt parsed    -> changed (client re-renders from it)
+    //   nothing observed in time   -> pending (client keeps the card, polls)
+    let mut outcome = "pending";
+    let mut fresh: Option<picker::Picker> = None;
     for _ in 0..34 {
         tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-        match capture_visible(&payload.target).and_then(|p| picker::parse(&p)) {
-            None => { outcome = "committed"; break }
-            Some(p) if p.fingerprint != payload.fingerprint => { outcome = "committed"; break }
-            Some(p) if p.cursor == payload.index => outcome = "awaiting_text",
+        let Some(pane) = capture_visible(&payload.target) else {
+            outcome = "committed";
+            break;
+        };
+        match picker::parse(&pane) {
+            None => {
+                outcome = if picker::awaiting_typed_reply(&pane) { "awaiting_text" } else { "committed" };
+                break;
+            }
+            Some(p) if p.fingerprint != payload.fingerprint => {
+                outcome = "changed";
+                fresh = Some(p);
+                break;
+            }
             Some(_) => {}
         }
     }
@@ -231,7 +265,7 @@ async fn picker_select(Json(payload): Json<PickerSelectRequest>) -> impl IntoRes
         Json(PickerActionResponse {
             success: true,
             error: None,
-            picker: None,
+            picker: fresh,
             outcome: Some(outcome.to_string()),
         }),
     )

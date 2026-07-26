@@ -255,6 +255,10 @@ fn fingerprint_of(question: &str, layout: Layout, options: &[Opt]) -> String {
 /// Claude prints below it, so an answered prompt sitting in scrollback can never
 /// re-arm the picker.
 pub fn parse(pane: &str) -> Option<Picker> {
+    parse_dialog(pane).or_else(|| parse_review(pane))
+}
+
+fn parse_dialog(pane: &str) -> Option<Picker> {
     let all: Vec<&str> = pane.lines().collect();
 
     // Trailing blank lines are tmux padding the pane to its height.
@@ -421,6 +425,114 @@ pub fn parse(pane: &str) -> Option<Picker> {
         options,
         preview,
     })
+}
+
+/// Multi-question prompts end on a "Review your answers" screen that carries no
+/// footer line, so the structural parser cannot see it. It is still a live
+/// two-option dialog (digits work on it), and missing it strands the whole
+/// exchange: the card vanishes with every answer given but nothing submitted.
+/// Anchored on Claude Code's literal strings — fail closed on anything else.
+fn parse_review(pane: &str) -> Option<Picker> {
+    let all: Vec<&str> = pane.lines().collect();
+
+    let mut end = all.len();
+    while end > 0 && all[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    if end == 0 {
+        return None;
+    }
+
+    // The tail must be nothing but option rows — the screen ends on them.
+    let mut first_row = end;
+    while first_row > 0 {
+        let Some(row) = scan_row(all[first_row - 1]) else { break };
+        if !is_option_row(&row) {
+            break;
+        }
+        first_row -= 1;
+    }
+    if end - first_row < 2 {
+        return None;
+    }
+
+    // Directly above: the confirm line, and further up the review header.
+    let confirm = (first_row.saturating_sub(3)..first_row)
+        .find(|i| all[*i].trim() == "Ready to submit your answers?")?;
+    let review = (confirm.saturating_sub(MAX_BLOCK_LINES)..confirm)
+        .find(|i| all[*i].trim() == "Review your answers")?;
+
+    let mut options: Vec<Opt> = Vec::new();
+    let mut cursor: Option<usize> = None;
+    for line in &all[first_row..end] {
+        let row = scan_row(line)?;
+        if row.is_cursor {
+            cursor = Some(options.len());
+        }
+        options.push(Opt {
+            number: row.number,
+            label: row.text,
+            description: None,
+            is_meta: false,
+        });
+    }
+    let cursor = cursor?;
+
+    // The card must show what is about to be submitted, so the answered pairs
+    // become part of the question text.
+    let question = all[review..=confirm]
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+
+    let fingerprint = fingerprint_of(&question, Layout::List, &options);
+    Some(Picker {
+        fingerprint,
+        header: Some("Review".to_string()),
+        question,
+        cursor,
+        layout: Layout::List,
+        options,
+        preview: None,
+    })
+}
+
+/// True when the dialog is in text-entry state: the chrome (rule, numbered
+/// rows, footer) is still on screen but no row carries the selection cursor —
+/// a printable key opened the free-text buffer, which replaces the `❯` row.
+/// In this state Claude accepts only typed text or Backspace.
+pub fn awaiting_typed_reply(pane: &str) -> bool {
+    if parse(pane).is_some() {
+        return false;
+    }
+    let all: Vec<&str> = pane.lines().collect();
+    let mut end = all.len();
+    while end > 0 && all[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    if end == 0 || !is_footer(all[end - 1]) {
+        return false;
+    }
+    let start = end.saturating_sub(MAX_BLOCK_LINES);
+    let has_rule = (start..end - 1).any(|i| is_rule(all[i]));
+    let has_numbered_row = (start..end - 1).any(|i| {
+        scan_row(all[i]).map_or(false, |r| r.indent <= MAX_OPTION_INDENT && r.number.is_some())
+    });
+    has_rule && has_numbered_row
+}
+
+/// True for the rows Claude Code adds around the tool's own options ("Type
+/// something." above the trailing rule, "Chat about this" below it). Their
+/// printed digits are display-only: pressing one types the digit into the
+/// free-text buffer instead of selecting. These rows must be activated by
+/// walking the cursor and pressing Enter, never by digit.
+pub fn is_input_row(opt: &Opt) -> bool {
+    if opt.is_meta {
+        return true;
+    }
+    opt.label.trim().trim_end_matches('.').eq_ignore_ascii_case("Type something")
 }
 
 /// The tmux key for a single step, used by the preview layout where the client
@@ -595,5 +707,86 @@ mod tests {
         let p = parse(&fixture("preview_test.txt")).unwrap();
         let meta = p.options.iter().find(|o| o.is_meta).unwrap();
         assert_eq!(select_key(meta.number), None);
+    }
+
+    #[test]
+    fn parses_review_screen() {
+        // Multi-question prompts end on a footer-less "Review your answers"
+        // screen. It must parse, or the card vanishes with the answers never
+        // submitted.
+        let p = parse(&fixture("review.txt")).expect("should parse");
+        assert_eq!(p.layout, Layout::List);
+        assert_eq!(p.cursor, 0);
+        assert_eq!(p.options.len(), 2);
+        assert_eq!(p.options[0].label, "Submit answers");
+        assert_eq!(p.options[0].number, Some(1));
+        assert_eq!(p.options[1].label, "Cancel");
+        assert_eq!(p.options[1].number, Some(2));
+        assert!(!p.options[0].is_meta);
+        assert!(p.question.contains("Ready to submit your answers?"));
+        // The card must show what is being submitted.
+        assert!(p.question.contains("Which fruit?"), "got: {}", p.question);
+        assert!(p.question.contains("→ Apple"), "got: {}", p.question);
+    }
+
+    #[test]
+    fn typed_buffer_state_is_not_a_picker() {
+        // A stray printable key puts the dialog into text entry: the typed
+        // buffer replaces the `❯` row, so there is no cursor to parse.
+        assert!(parse(&fixture("typed_buffer.txt")).is_none());
+    }
+
+    #[test]
+    fn typed_buffer_state_is_awaiting_typed_reply() {
+        // The dialog chrome is still on screen but no row carries the cursor —
+        // Claude is waiting for typed text, and the commit path must report
+        // that instead of guessing from a timeout.
+        assert!(awaiting_typed_reply(&fixture("typed_buffer.txt")));
+    }
+
+    #[test]
+    fn live_dialog_is_not_awaiting_typed_reply() {
+        assert!(!awaiting_typed_reply(&fixture("list_gbc.txt")));
+    }
+
+    #[test]
+    fn plain_output_is_not_awaiting_typed_reply() {
+        assert!(!awaiting_typed_reply(&fixture("plain.txt")));
+        assert!(!awaiting_typed_reply(&fixture("answered.txt")));
+    }
+
+    #[test]
+    fn tui_added_rows_are_input_rows() {
+        // "Type something." and "Chat about this" are rendered by Claude Code,
+        // not the tool call. Their printed digits are display-only — pressing
+        // one types the digit into the free-text buffer instead of selecting.
+        let type_something = Opt {
+            number: Some(4),
+            label: "Type something.".to_string(),
+            description: None,
+            is_meta: false,
+        };
+        let multi_variant = Opt {
+            number: Some(4),
+            label: "Type something".to_string(),
+            description: None,
+            is_meta: false,
+        };
+        let chat = Opt {
+            number: Some(5),
+            label: "Chat about this".to_string(),
+            description: None,
+            is_meta: true,
+        };
+        let real = Opt {
+            number: Some(1),
+            label: "Apple".to_string(),
+            description: None,
+            is_meta: false,
+        };
+        assert!(is_input_row(&type_something));
+        assert!(is_input_row(&multi_variant));
+        assert!(is_input_row(&chat));
+        assert!(!is_input_row(&real));
     }
 }

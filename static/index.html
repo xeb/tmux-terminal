@@ -2019,6 +2019,13 @@
             paintPicker(pickerData, st);
         }
 
+        // The rows Claude Code adds around the tool's own options. Selecting
+        // one dismisses the prompt and leaves Claude waiting at its ordinary
+        // input, so the card follows up by asking for the text.
+        function isInputRow(opt) {
+            return opt.is_meta || /^type something\.?$/i.test(opt.label.trim());
+        }
+
         async function commitPicker() {
             if (!pickerData || committing) return;
             committing = true;
@@ -2050,16 +2057,35 @@
                 if (!res.ok) { pickerWarn('send failed'); return; }
                 const body = await res.json().catch(() => ({}));
 
-                // Two options don't answer anything on their own — they leave
-                // Claude waiting for typed text. Ask for it here rather than
-                // closing the card and leaving the user to discover that.
+                // "Type something." and "Chat about this" don't answer anything
+                // on their own — the server dismisses the prompt and Claude
+                // waits at its ordinary input. Ask for the text here rather
+                // than closing the card and leaving the user to discover that.
                 const chosen = pickerData.options[index];
+                if (chosen && isInputRow(chosen)) {
+                    enterTextMode(target, 'What do you want to say?');
+                    return;
+                }
                 if (body.outcome === 'awaiting_text') {
                     enterTextMode(target, 'Claude is waiting for your text');
                     return;
                 }
-                if (chosen && chosen.is_meta) {
-                    enterTextMode(target, 'What do you want to say?');
+                if (body.outcome === 'changed') {
+                    // The keystroke produced a different prompt — the next
+                    // question of a set, a toggled checkbox, or the review
+                    // screen. Re-render it; nothing is finished yet.
+                    pickerByTarget.delete(target);
+                    if (body.picker) updatePicker(target, body.picker);
+                    else captureOutput();
+                    return;
+                }
+                if (body.outcome === 'pending') {
+                    // Keystroke sent, effect not yet observed — a busy session
+                    // can lag its redraw by seconds. Keep the card; polling
+                    // clears it if the answer landed, and if the keystroke was
+                    // dropped the card is still here to try again.
+                    pickerWarn('sent — waiting for Claude to take it');
+                    setTimeout(captureOutput, 1500);
                     return;
                 }
 

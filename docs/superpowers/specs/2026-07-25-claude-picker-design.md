@@ -381,3 +381,39 @@ and a committed choice is confirmed by reading back what Claude recorded.
 
 Phases 1–3 deliver the feature. Phase 4 is what makes switching away genuinely safe rather than
 merely permitted, and should not be dropped.
+
+## Revision, 2026-07-26 — outcomes are evidence, not timeouts
+
+The first outcome model inferred "awaiting_text" from the prompt still being on screen with the
+cursor on the chosen row after ~2s of watching. That inference had a false premise: Claude Code's
+pane render can lag its real state by whole seconds on a loaded session (a cleared text buffer kept
+rendering for seconds until a forced repaint), so a slow redraw of a *committed* answer was reported
+as "Claude is waiting for your text". Four other defects were confirmed live at the same time:
+
+- The digits printed on "Type something." and "Chat about this" are display-only. Pressing one
+  types the digit into the dialog's free-text buffer — a trap state where Enter does nothing and
+  arrow keys are swallowed as literal escape bytes. Only the tool call's real options are
+  digit-bound (verified on 2.1.219 and 2.1.220).
+- "Type something." no longer opens an inline field at all. Enter on it dismisses the prompt,
+  records "User declined to answer questions", and Claude waits at its ordinary input — the same
+  shape as "Chat about this".
+- Commit-side captures were visible-area only, so any prompt taller than the pane (narrow windows,
+  long descriptions) pushed its top rule out of view and every select died with a false
+  "no prompt is waiting".
+- Multi-question sets end on a footer-less "Review your answers" screen the parser rejected, so the
+  card vanished with every answer given and nothing submitted.
+
+The revised model reports only what was observed:
+
+- `committed` — the prompt left the pane and its chrome is gone.
+- `awaiting_text` — the chrome is still on screen but no row carries `❯`: the free-text buffer is
+  open. Positive, structural evidence; never inferred from elapsed time.
+- `changed` — a different prompt parsed (next question of a set, toggled checkbox, review screen).
+  The response carries it so the card re-renders immediately.
+- `pending` — nothing observed before the watch window closed. The card stays up and polling
+  reconciles; if the keystroke was dropped the card is still there to try again.
+
+Supporting changes: commit-side captures include bounded scrollback (`-S -200`); the review screen
+parses as a two-option picker (its digits are live, verified), so multi-question sets complete
+end-to-end; input rows are activated by walking the cursor and pressing Enter, never by digit, and
+the card follows the resulting dismissal by asking for the text it now knows Claude is waiting for.
