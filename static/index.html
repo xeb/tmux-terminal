@@ -1231,6 +1231,99 @@
             .upload-bar-fill { transition: none; }
         }
 
+        /* Claude working indicator. Indeterminate on purpose: Claude reports
+           elapsed time, never a total, so a filling bar would be a fabricated
+           percentage. The sweep says "running", the text says how long. */
+        .working-bar {
+            padding: 0.35rem 0.5rem 0.45rem;
+            border-bottom: 1px solid var(--matrix-dim);
+        }
+
+        .working-bar[hidden] {
+            display: none;
+        }
+
+        .working-line {
+            display: flex;
+            gap: 0.5rem;
+            align-items: baseline;
+            font-size: 0.65rem;
+            margin-bottom: 0.3rem;
+            min-width: 0;
+        }
+
+        .working-verb {
+            color: var(--matrix-green);
+            font-weight: 700;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            white-space: nowrap;
+            flex-shrink: 0;
+        }
+
+        .working-meta {
+            color: var(--matrix-dim);
+            font-variant-numeric: tabular-nums;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .working-track {
+            height: 8px;
+            border: 1px solid var(--matrix-dim);
+            background: var(--void);
+            overflow: hidden;
+        }
+
+        .working-fill {
+            height: 100%;
+            width: 30%;
+            background: var(--matrix-green);
+            animation: working-sweep 1.4s linear infinite;
+        }
+
+        @keyframes working-sweep {
+            from { transform: translateX(-110%); }
+            to   { transform: translateX(370%); }
+        }
+
+        @media (prefers-reduced-motion: reduce) {
+            .working-fill { animation: none; width: 100%; opacity: 0.45; }
+        }
+
+        /* Command history list — the only way to reach history on a phone,
+           where the keyboard has no arrow keys. */
+        .history-item {
+            gap: 0.6rem;
+            align-items: flex-start;
+        }
+
+        .history-num {
+            color: var(--matrix-dim);
+            font-variant-numeric: tabular-nums;
+            flex-shrink: 0;
+            min-width: 2ch;
+            text-align: right;
+        }
+
+        .history-cmd {
+            flex: 1;
+            min-width: 0;
+            white-space: pre-wrap;
+            overflow-wrap: anywhere;
+            /* Long commands stay tappable without turning the list into a wall */
+            max-height: 3.6em;
+            overflow: hidden;
+        }
+
+        .history-empty {
+            padding: 1rem;
+            font-size: 0.7rem;
+            color: var(--matrix-dim);
+            text-align: center;
+        }
+
     </style>
 </head>
 <body>
@@ -1244,6 +1337,14 @@
             <button class="menu-btn" id="menuBtn">☰ MENU</button>
             <button class="waiting-pill" id="waitingPill" title="Jump to a window waiting on a question"></button>
             <input type="file" id="fileInput" multiple hidden>
+        </div>
+
+        <div class="working-bar" id="workingBar" hidden>
+            <div class="working-line">
+                <span class="working-verb" id="workingVerb"></span>
+                <span class="working-meta" id="workingMeta"></span>
+            </div>
+            <div class="working-track"><div class="working-fill"></div></div>
         </div>
 
         <button class="picker-bar" id="pickerBar"></button>
@@ -1298,6 +1399,7 @@
                 <div class="help-row"><kbd>^B w</kbd> <span>Window list</span></div>
                 <div class="help-row"><kbd>^B n</kbd> <span>Next window</span></div>
                 <div class="help-row"><kbd>^B p</kbd> <span>Previous window</span></div>
+                <div class="help-row"><kbd>^B h</kbd> <span>Command history</span></div>
                 <div class="help-row"><kbd>^B r</kbd> <span>Refresh window list</span></div>
                 <div class="help-row"><kbd>^B ?</kbd> <span>This help</span></div>
             </div>
@@ -1318,10 +1420,27 @@
         </div>
     </div>
 
+    <div class="modal-overlay" id="historyModal">
+        <div class="window-modal">
+            <div class="modal-header">Command History <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B h</span></div>
+            <div class="modal-hint">tap to load • ↑/↓ navigate • Enter load • Esc close</div>
+            <div class="window-list" id="historyList"></div>
+            <div class="upload-actions">
+                <button class="menu-btn" id="historyClear">CLEAR</button>
+                <button class="menu-btn" id="historyClose">CLOSE</button>
+            </div>
+        </div>
+    </div>
+
     <div class="modal-overlay" id="actionMenuModal">
         <div class="action-menu">
             <div class="modal-header">MENU</div>
             <div class="action-menu-list">
+                <button class="action-menu-item" id="menuHistory">
+                    <span class="action-icon">&#x2191;</span>
+                    <span class="action-label">Command History</span>
+                    <span class="action-shortcut">^B h</span>
+                </button>
                 <button class="action-menu-item" id="menuUpload">
                     <span class="action-icon">&#x21A5;</span>
                     <span class="action-label">Upload</span>
@@ -1479,6 +1598,11 @@
         const renameInput = document.getElementById('renameInput');
         const newWindowModal = document.getElementById('newWindowModal');
         const newWindowInput = document.getElementById('newWindowInput');
+        const historyModal = document.getElementById('historyModal');
+        const historyList = document.getElementById('historyList');
+        const workingBar = document.getElementById('workingBar');
+        const workingVerb = document.getElementById('workingVerb');
+        const workingMeta = document.getElementById('workingMeta');
 
         let captureInterval = null;
         let isFirstCapture = true;
@@ -1517,6 +1641,101 @@
             currentInput = '';
         }
 
+        /* ── History browser ───────────────────────────────────────────────
+           ↑/↓ recall only exists on a hardware keyboard; the iOS keyboard has
+           no arrow keys, which left history unreachable on the phone — where
+           this UI is mostly used. The list is that missing affordance, not a
+           replacement: the key bindings are untouched. */
+
+        let historySelectedIndex = 0;
+        let historyClearArmed = false;
+
+        // Newest first — the entry you want is nearly always the last one sent.
+        function historyEntries() {
+            return commandHistory.slice().reverse();
+        }
+
+        function renderHistoryList() {
+            const entries = historyEntries();
+
+            if (entries.length === 0) {
+                historyList.innerHTML = '<div class="history-empty">No commands yet</div>';
+                return;
+            }
+
+            historyList.innerHTML = entries.map((cmd, i) => `
+                <div class="window-item history-item ${i === historySelectedIndex ? 'selected' : ''}" data-index="${i}">
+                    <span class="history-num">${i + 1}</span>
+                    <span class="history-cmd"></span>
+                </div>
+            `).join('');
+
+            // Commands are arbitrary user text — set as text, never as markup.
+            historyList.querySelectorAll('.history-item').forEach((item, i) => {
+                item.querySelector('.history-cmd').textContent = entries[i];
+                item.addEventListener('click', () => useHistoryEntry(i));
+            });
+
+            const selected = historyList.querySelector('.selected');
+            if (selected) selected.scrollIntoView({ block: 'nearest' });
+        }
+
+        // Loads into the input rather than sending. Recalling a command and
+        // running it are different decisions, and one tap must not make both.
+        function useHistoryEntry(index) {
+            const command = historyEntries()[index];
+            if (command === undefined) return;
+            closeHistoryModal();
+            commandInput.value = command;
+            resetHistoryNavigation();
+            commandInput.focus();
+            commandInput.setSelectionRange(command.length, command.length);
+        }
+
+        function openHistoryModal() {
+            historySelectedIndex = 0;
+            disarmHistoryClear();
+            renderHistoryList();
+            historyModal.classList.add('show');
+        }
+
+        function closeHistoryModal() {
+            historyModal.classList.remove('show');
+            disarmHistoryClear();
+            commandInput.focus();
+        }
+
+        function moveHistorySelection(delta) {
+            const count = historyEntries().length;
+            if (count === 0) return;
+            historySelectedIndex = Math.min(count - 1, Math.max(0, historySelectedIndex + delta));
+            renderHistoryList();
+        }
+
+        function disarmHistoryClear() {
+            historyClearArmed = false;
+            const btn = document.getElementById('historyClear');
+            if (btn) btn.textContent = 'CLEAR';
+        }
+
+        // Two taps: wiping history is unrecoverable and the button sits next to
+        // CLOSE, which is the one people actually mean.
+        function clearHistoryEntries(btn) {
+            if (!historyClearArmed) {
+                historyClearArmed = true;
+                btn.textContent = 'SURE?';
+                setTimeout(disarmHistoryClear, 4000);
+                return;
+            }
+            commandHistory = [];
+            localStorage.removeItem(HISTORY_KEY);
+            resetHistoryNavigation();
+            historySelectedIndex = 0;
+            disarmHistoryClear();
+            renderHistoryList();
+            showStatus('HISTORY CLEARED', 'success');
+        }
+
         function showStatus(message, type = 'success') {
             status.textContent = message;
             status.className = `status show ${type}`;
@@ -1533,6 +1752,44 @@
             return outputContent.contains(range.commonAncestorContainer);
         }
 
+        /* ── Claude working indicator ──────────────────────────────────────
+           Claude Code prints one status line while it is running:
+
+               ✻ Misting… (1m 32s · ↓ 5.1k tokens · thought for 4s)
+
+           and replaces it with a past-tense summary the moment it stops:
+
+               ✻ Worked for 3m 16s
+
+           The parenthesised live timer is the discriminator — the spinner
+           glyph and the verb appear in both, so keying on either would leave
+           the bar running forever after Claude finished. Read from the pane we
+           already poll, so no extra request and no second source of truth. */
+        const WORKING_LINE = /(?:^|\s)([A-Za-z][A-Za-z ]{0,20})…\s*\(([^)]*\b\d+s\b[^)]*)\)/;
+
+        function parseWorking(content) {
+            if (!content) return null;
+            const lines = content.split('\n');
+            // Only the tail: the same line from an earlier turn is still in
+            // scrollback, and matching it would pin the bar on permanently.
+            for (let i = lines.length - 1; i >= Math.max(0, lines.length - 30); i--) {
+                const match = lines[i].match(WORKING_LINE);
+                if (match) return { verb: match[1].trim(), meta: match[2].trim() };
+            }
+            return null;
+        }
+
+        function updateWorking(content) {
+            const working = parseWorking(content);
+            if (!working) {
+                workingBar.hidden = true;
+                return;
+            }
+            workingVerb.textContent = working.verb;
+            workingMeta.textContent = working.meta;
+            workingBar.hidden = false;
+        }
+
         async function captureOutput() {
             const target = sessionSelect.value;
             if (!target) return;
@@ -1546,6 +1803,7 @@
                 const data = await response.json();
 
                 if (data.window_closed) {
+                    updateWorking('');
                     loadWindows();
                     return;
                 }
@@ -1555,6 +1813,10 @@
                 // the user may have switched windows while this was in flight.
                 if (sessionSelect.value === target) {
                     updatePicker(target, data.picker || null);
+                    // Above the unchanged-content early return below: a pane
+                    // that stops changing is exactly a pane that stopped
+                    // working, and the bar has to come down for that.
+                    updateWorking(data.content);
                 }
 
                 if (data.content) {
@@ -2180,11 +2442,17 @@
             }
         }
 
-        waitingPill.addEventListener('click', () => {
+        waitingPill.addEventListener('click', async () => {
             const others = pendingTargets.filter(t => t !== sessionSelect.value);
             if (others.length === 0) return;
-            sessionSelect.value = others[0];
+            // The waiting window is often a MASTER one, which the filter keeps out
+            // of the dropdown — a plain `sessionSelect.value = target` then no-ops
+            // and the pill looks dead. Persist the target and blank the live
+            // selection first so renderWindowOptions()'s keepTarget resolves to it
+            // and the option actually exists before we select it.
             localStorage.setItem('tmux-selected-target', others[0]);
+            sessionSelect.value = '';
+            await loadWindows();
             startCapture();
         });
 
@@ -2552,6 +2820,24 @@
                 return true;
             }
 
+            // Handle history modal
+            if (historyModal.classList.contains('show')) {
+                if (e.key === 'Escape' || e.key === 'q') {
+                    e.preventDefault();
+                    closeHistoryModal();
+                } else if (e.key === 'ArrowUp' || e.key === 'k') {
+                    e.preventDefault();
+                    moveHistorySelection(-1);
+                } else if (e.key === 'ArrowDown' || e.key === 'j') {
+                    e.preventDefault();
+                    moveHistorySelection(1);
+                } else if (e.key === 'Enter') {
+                    e.preventDefault();
+                    useHistoryEntry(historySelectedIndex);
+                }
+                return true; // consume all keys while the history modal is open
+            }
+
             // Handle help modal
             if (helpModal.classList.contains('show')) {
                 if (e.key === 'Escape' || e.key === 'q' || e.key === '?') {
@@ -2700,6 +2986,9 @@
                         showStatus('PREV WINDOW', 'success');
                     }
                     return true;
+                case 'h':
+                    openHistoryModal();
+                    return true;
                 case 'r':
                     // Refresh window list
                     loadWindows();
@@ -2786,6 +3075,13 @@
             if (e.target === actionMenuModal) closeActionMenu();
         });
 
+        document.getElementById('menuHistory').addEventListener('click', () => { closeActionMenu(); openHistoryModal(); });
+        document.getElementById('historyClose').addEventListener('click', closeHistoryModal);
+        document.getElementById('historyClear').addEventListener('click', (e) => clearHistoryEntries(e.currentTarget));
+        historyModal.addEventListener('click', (e) => {
+            if (e.target === historyModal) closeHistoryModal();
+        });
+
         document.getElementById('menuUpload').addEventListener('click', () => { closeActionMenu(); openUploadPicker(); });
         document.getElementById('menuRenameWindow').addEventListener('click', () => { closeActionMenu(); openRenameModal(); });
         document.getElementById('menuWindowList').addEventListener('click', () => { closeActionMenu(); openWindowModal(); });
@@ -2815,6 +3111,9 @@
             // per-window picker state is left exactly as it was. Clear only the
             // view, which the next capture repopulates for the new target.
             clearPicker();
+            // Stale for up to a poll otherwise, and a bar that says the new
+            // window is working when it is idle is worse than a beat of blank.
+            updateWorking('');
             startCapture();
             refreshPendingQuestions();
             // Don't yank focus back to the textarea if the new window turns out
@@ -2824,7 +3123,7 @@
 
         commandInput.addEventListener('keydown', (e) => {
             // Don't handle if modal is open or in prefix mode
-            if (windowModal.classList.contains('show') || prefixMode) return;
+            if (windowModal.classList.contains('show') || historyModal.classList.contains('show') || prefixMode) return;
 
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
