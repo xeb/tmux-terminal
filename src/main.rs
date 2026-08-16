@@ -387,30 +387,88 @@ fn send_keys_literal(target: &str, text: &str) -> Result<(), String> {
     }
 }
 
-/// Targets of every window currently waiting on a prompt. This is what makes
-/// switching away from a question safe rather than merely permitted — without it
-/// you switch away and forget.
-async fn pending_questions() -> impl IntoResponse {
+#[derive(Serialize)]
+struct WindowStatus {
+    target: String,
+    /// A prompt is on screen and nothing moves until it is answered.
+    waiting: bool,
+    /// Claude's live status verb ("Wrangling"), absent when it is not working.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    verb: Option<String>,
+    /// The parenthesised meta from the same line: "10m 40s · ↓ 25.6k tokens".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    meta: Option<String>,
+}
+
+/// Claude Code prints one status line while it is running:
+///
+///     ✻ Wrangling… (10m 40s · ↓ 25.6k tokens)
+///
+/// and replaces it with a past-tense summary the moment it stops:
+///
+///     ✻ Worked for 3m 16s
+///
+/// The parenthesised live timer is the discriminator — the spinner glyph and
+/// the verb appear in both, so keying on either would report a finished window
+/// as busy forever. Mirrors WORKING_LINE in static/index.html; the two must
+/// stay in step.
+fn parse_working(pane: &str) -> Option<(String, String)> {
+    let re = regex::Regex::new(r"(?:^|\s)([A-Za-z][A-Za-z ]{0,20})…\s*\(([^)]*\b\d+s\b[^)]*)\)")
+        .ok()?;
+    // Only the tail: the same line from an earlier turn is still in scrollback,
+    // and matching it would pin every window on permanently.
+    let lines: Vec<&str> = pane.lines().collect();
+    let start = lines.len().saturating_sub(30);
+    for line in lines[start..].iter().rev() {
+        if let Some(caps) = re.captures(line) {
+            return Some((
+                caps[1].trim().to_string(),
+                caps[2].trim().to_string(),
+            ));
+        }
+    }
+    None
+}
+
+/// Per-window liveness: which windows are waiting on a prompt, and which are
+/// busy working. This is what makes switching away safe rather than merely
+/// permitted — without it you switch away and forget. One capture per window
+/// answers both questions, so the busy state costs no extra tmux calls.
+async fn window_status() -> impl IntoResponse {
     let Ok(output) = Command::new("tmux")
         .args(["list-windows", "-a", "-F", "#{session_name}:#{window_index}"])
         .output()
     else {
-        return (StatusCode::OK, Json(Vec::<String>::new()));
+        return (StatusCode::OK, Json(Vec::<WindowStatus>::new()));
     };
 
     let stdout = String::from_utf8_lossy(&output.stdout);
-    let pending: Vec<String> = stdout
+    let statuses: Vec<WindowStatus> = stdout
         .lines()
         .filter(|t| !t.trim().is_empty())
-        .filter(|t| {
-            capture_visible(t)
-                .and_then(|pane| picker::parse(&pane))
-                .is_some()
+        .filter_map(|target| {
+            let pane = capture_visible(target)?;
+            let waiting = picker::parse(&pane).is_some();
+            // A window at a prompt is not working, whatever the last status
+            // line said — the question is the thing you need to act on.
+            let working = if waiting { None } else { parse_working(&pane) };
+            if !waiting && working.is_none() {
+                return None;
+            }
+            let (verb, meta) = match working {
+                Some((v, m)) => (Some(v), Some(m)),
+                None => (None, None),
+            };
+            Some(WindowStatus {
+                target: target.to_string(),
+                waiting,
+                verb,
+                meta,
+            })
         })
-        .map(|t| t.to_string())
         .collect();
 
-    (StatusCode::OK, Json(pending))
+    (StatusCode::OK, Json(statuses))
 }
 
 async fn list_windows() -> impl IntoResponse {
@@ -1790,7 +1848,7 @@ async fn main() {
         .route("/api/picker/select", post(picker_select))
         .route("/api/picker/step", post(picker_step))
         .route("/api/picker/text", post(picker_text))
-        .route("/api/pending-questions", get(pending_questions))
+        .route("/api/window-status", get(window_status))
         .route("/api/config", get(get_config))
         .route("/api/new-window", post(new_window))
         .route("/api/new-window-named", post(new_window_named))
@@ -1828,7 +1886,52 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::validate_window_name;
+    use super::{parse_working, validate_window_name};
+
+    #[test]
+    fn reads_the_live_status_line() {
+        let pane = "$ claude\n✻ Wrangling… (10m 40s · ↓ 25.6k tokens)\n";
+        let (verb, meta) = parse_working(pane).expect("should see a working line");
+        assert_eq!(verb, "Wrangling");
+        assert_eq!(meta, "10m 40s · ↓ 25.6k tokens");
+    }
+
+    // Claude redraws the status line in place, so when it stops, the live line
+    // is gone and only this summary is left. Keying on the verb or the spinner
+    // glyph would report the window as busy forever.
+    #[test]
+    fn ignores_the_past_tense_summary() {
+        let pane = "$ claude\n✻ Worked for 3m 16s\n\n> \n";
+        assert!(parse_working(pane).is_none());
+    }
+
+    #[test]
+    fn ignores_a_working_line_left_in_scrollback() {
+        let mut pane = String::from("✻ Misting… (1m 32s · ↓ 5.1k tokens)\n");
+        for i in 0..40 {
+            pane.push_str(&format!("output line {i}\n"));
+        }
+        assert!(parse_working(&pane).is_none());
+    }
+
+    #[test]
+    fn reads_the_most_recent_of_several() {
+        let pane = "✻ Misting… (1m 32s · ↓ 5.1k tokens)\n✻ Wrangling… (10m 40s · ↓ 25.6k tokens)\n";
+        assert_eq!(parse_working(pane).unwrap().0, "Wrangling");
+    }
+
+    #[test]
+    fn reads_a_multi_word_verb_and_thinking_meta() {
+        let pane = "✻ Deep thinking… (2s · ↑ 41 tokens · thought for 4s)\n";
+        let (verb, meta) = parse_working(pane).expect("should see a working line");
+        assert_eq!(verb, "Deep thinking");
+        assert_eq!(meta, "2s · ↑ 41 tokens · thought for 4s");
+    }
+
+    #[test]
+    fn ignores_an_idle_pane() {
+        assert!(parse_working("$ ls\nCargo.toml  src  static\n$ ").is_none());
+    }
 
     #[test]
     fn accepts_valid_names() {

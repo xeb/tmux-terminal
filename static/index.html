@@ -465,6 +465,14 @@
         }
         .waiting-pill.show { display: inline-flex; }
 
+        /* Windows Claude is still working in. Deliberately quieter than the
+           waiting pill: busy is information, a question is a demand. */
+        .busy-pill {
+            background: transparent;
+            border-color: var(--matrix-dim);
+            color: var(--matrix-green);
+        }
+
         /* On a phone the bar has no room for the word, and a cut-off pill reads
            as breakage. The dot and the count carry the meaning on their own. */
         @media (max-width: 560px) {
@@ -1336,6 +1344,7 @@
             <button class="menu-btn new-window-btn" id="newWindowBtn" title="New window" aria-label="New window">+</button>
             <button class="menu-btn" id="menuBtn">☰ MENU</button>
             <button class="waiting-pill" id="waitingPill" title="Jump to a window waiting on a question"></button>
+            <button class="waiting-pill busy-pill" id="busyPill" title="Jump to a window Claude is working in"></button>
             <input type="file" id="fileInput" multiple hidden>
         </div>
 
@@ -1848,6 +1857,7 @@
         const pickerCard = document.getElementById('pickerCard');
         const pickerBar = document.getElementById('pickerBar');
         const waitingPill = document.getElementById('waitingPill');
+        const busyPill = document.getElementById('busyPill');
 
         const pickerByTarget = new Map();   // target -> {cursor, dirty, fingerprint, collapsed}
         const focusedPrompts = new Set();   // `${target}|${fingerprint}` already focused once
@@ -1863,6 +1873,7 @@
         let committing = false;
         let armedIndex = -1;                // touch: row awaiting a confirming second tap
         let pendingTargets = [];
+        let busyTargets = new Map();        // target -> short elapsed, e.g. "10m"
 
         function pickerStateFor(target) {
             if (!pickerByTarget.has(target)) {
@@ -2414,13 +2425,32 @@
             if (pickerData) paintPicker(pickerData, pickerStateFor(sessionSelect.value));
         });
 
-        async function refreshPendingQuestions() {
+        /* The elapsed time Claude reports is "10m 40s · ↓ 25.6k tokens". In a
+           dropdown row only the coarsest unit is worth the width — the point is
+           "still going, a while now", not a stopwatch. */
+        function shortElapsed(meta) {
+            if (!meta) return '';
+            const m = meta.match(/(\d+)\s*h|\b(\d+)\s*m\b|\b(\d+)\s*s\b/);
+            if (!m) return '';
+            if (m[1]) return `${m[1]}h`;
+            if (m[2]) return `${m[2]}m`;
+            return `${m[3]}s`;
+        }
+
+        async function refreshWindowStatus() {
             try {
-                const res = await fetch('/api/pending-questions');
-                pendingTargets = await res.json();
+                const res = await fetch('/api/window-status');
+                const rows = await res.json();
+                pendingTargets = rows.filter(r => r.waiting).map(r => r.target);
+                busyTargets = new Map(
+                    rows.filter(r => !r.waiting && r.verb)
+                        .map(r => [r.target, shortElapsed(r.meta)])
+                );
             } catch (err) {
                 pendingTargets = [];
+                busyTargets = new Map();
             }
+
             const others = pendingTargets.filter(t => t !== sessionSelect.value);
             waitingPill.classList.toggle('show', others.length > 0);
             if (others.length > 0) {
@@ -2430,30 +2460,65 @@
                     ? '1 window is waiting on a question'
                     : `${others.length} windows are waiting on a question`;
             }
+
+            // The viewed window already has the progress bar above the output,
+            // so counting it here would say the same thing twice.
+            const busyOthers = [...busyTargets.keys()].filter(t => t !== sessionSelect.value);
+            busyPill.classList.toggle('show', busyOthers.length > 0);
+            if (busyOthers.length > 0) {
+                busyPill.innerHTML =
+                    `◆ ${busyOthers.length} <span class="waiting-word">working</span>`;
+                busyPill.title = busyOthers.length === 1
+                    ? '1 window is still working'
+                    : `${busyOthers.length} windows are still working`;
+            }
+
             markPendingInDropdown();
         }
 
+        /* Rebuild each label from its stored base name rather than trimming a
+           suffix off what is already there: the busy marker is variable width
+           ("◆ 10m" grows to "◆ 1h"), and suffix arithmetic on a label that has
+           already been marked once eats the window name. */
         function markPendingInDropdown() {
             for (const opt of sessionSelect.options) {
-                const marked = opt.textContent.endsWith(' ●');
-                const should = pendingTargets.includes(opt.value);
-                if (should && !marked) opt.textContent += ' ●';
-                else if (!should && marked) opt.textContent = opt.textContent.slice(0, -2);
+                const base = opt.dataset.baseLabel;
+                if (base === undefined) continue;
+                // Waiting wins: a window at a prompt needs an answer, and that
+                // is the more urgent thing to say in one row of text.
+                if (pendingTargets.includes(opt.value)) {
+                    opt.textContent = `${base} ●`;
+                } else if (busyTargets.has(opt.value)) {
+                    const elapsed = busyTargets.get(opt.value);
+                    opt.textContent = elapsed ? `${base} ◆ ${elapsed}` : `${base} ◆`;
+                } else {
+                    opt.textContent = base;
+                }
             }
+        }
+
+        // The target is often a MASTER window, which the filter keeps out of the
+        // dropdown — a plain `sessionSelect.value = target` then no-ops and the
+        // pill looks dead. Persist the target and blank the live selection first
+        // so renderWindowOptions()'s keepTarget resolves to it and the option
+        // actually exists before we select it.
+        async function jumpToWindow(target) {
+            localStorage.setItem('tmux-selected-target', target);
+            sessionSelect.value = '';
+            await loadWindows();
+            startCapture();
         }
 
         waitingPill.addEventListener('click', async () => {
             const others = pendingTargets.filter(t => t !== sessionSelect.value);
             if (others.length === 0) return;
-            // The waiting window is often a MASTER one, which the filter keeps out
-            // of the dropdown — a plain `sessionSelect.value = target` then no-ops
-            // and the pill looks dead. Persist the target and blank the live
-            // selection first so renderWindowOptions()'s keepTarget resolves to it
-            // and the option actually exists before we select it.
-            localStorage.setItem('tmux-selected-target', others[0]);
-            sessionSelect.value = '';
-            await loadWindows();
-            startCapture();
+            await jumpToWindow(others[0]);
+        });
+
+        busyPill.addEventListener('click', async () => {
+            const others = [...busyTargets.keys()].filter(t => t !== sessionSelect.value);
+            if (others.length === 0) return;
+            await jumpToWindow(others[0]);
         });
 
         function startCapture() {
@@ -2505,7 +2570,10 @@
             windows.forEach((win, index) => {
                 const option = document.createElement('option');
                 option.value = win.target;
-                option.textContent = `${win.target} - ${win.name}`;
+                // Kept apart from textContent so markPendingInDropdown can
+                // rebuild the label without ever parsing its own markers back.
+                option.dataset.baseLabel = `${win.target} - ${win.name}`;
+                option.textContent = option.dataset.baseLabel;
                 // Select saved target if it exists, otherwise keep whatever is
                 // currently being viewed selected (it may never have been
                 // persisted — e.g. the fresh-load default), otherwise default
@@ -3115,7 +3183,7 @@
             // window is working when it is idle is worse than a beat of blank.
             updateWorking('');
             startCapture();
-            refreshPendingQuestions();
+            refreshWindowStatus();
             // Don't yank focus back to the textarea if the new window turns out
             // to have a question waiting; updatePicker claims focus for that.
             setTimeout(() => { if (!pickerData) commandInput.focus(); }, 500);
@@ -3424,8 +3492,8 @@
 
         // Which other windows are waiting on a question. Slower than the main
         // capture — it probes every window, and the answer rarely changes.
-        refreshPendingQuestions();
-        setInterval(refreshPendingQuestions, 3000);
+        refreshWindowStatus();
+        setInterval(refreshWindowStatus, 3000);
     </script>
 </body>
 </html>
