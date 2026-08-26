@@ -577,6 +577,11 @@
             padding: 0;
             display: flex;
             flex-direction: column;
+            /* The overlay centres this box, so a list taller than the screen
+               gets clipped at BOTH ends and the last item becomes unreachable.
+               Cap it and let it scroll instead. */
+            max-height: 90%;
+            overflow-y: auto;
         }
 
         .action-menu .modal-header {
@@ -613,7 +618,8 @@
         }
 
         /* Logout: visually separated from tmux actions */
-        .action-menu-item.menu-logout {
+        .action-menu-item.menu-logout,
+        .action-menu-item.menu-kill {
             border-top: 2px solid var(--matrix-dim);
         }
 
@@ -643,6 +649,31 @@
         .action-menu-item:active .action-shortcut {
             color: var(--void);
             opacity: 0.7;
+        }
+
+        /* On a phone the full list is twelve rows tall and ran past the
+           viewport. Tighter type and padding fit it on screen; rows stay
+           around 44px so they are still comfortable thumb targets. */
+        @media (max-width: 560px) {
+            .action-menu .modal-header {
+                padding: 0.6rem 1rem;
+                font-size: 0.75rem;
+            }
+
+            .action-menu-item {
+                padding: 0.7rem 1rem;
+                gap: 0.6rem;
+                font-size: 0.75rem;
+            }
+
+            .action-menu-item .action-icon {
+                font-size: 1rem;
+                width: 1.25rem;
+            }
+
+            .action-menu-item .action-shortcut {
+                font-size: 0.6rem;
+            }
         }
 
         /* Rename Modal */
@@ -683,6 +714,99 @@
             padding: 0.5rem 1rem;
             font-size: 0.65rem;
             color: var(--matrix-dim);
+        }
+
+        /* Kill Window confirmation */
+        .kill-target {
+            padding: 0.75rem 1rem 0.25rem;
+            font-size: 0.9rem;
+            color: var(--matrix-green);
+            word-break: break-all;
+        }
+
+        .kill-warning {
+            padding: 0 1rem 0.75rem;
+            font-size: 0.7rem;
+            color: var(--matrix-dim);
+            border-bottom: 1px solid var(--matrix-dim);
+        }
+
+        .kill-actions {
+            display: flex;
+            gap: 0.5rem;
+            padding: 0.75rem 1rem;
+        }
+
+        .kill-actions .menu-btn {
+            flex: 1;
+        }
+
+        .kill-actions .kill-confirm {
+            font-weight: 700;
+        }
+
+        /* New-window autocomplete. The suggestion list hangs BELOW the modal
+           box instead of living inside it: the overlay centres its child, so
+           growing the box would push the input upward every time the list
+           changed size. Absolute positioning keeps the modal — and the input
+           the user is typing into — exactly where it has always been. */
+        .new-window-modal {
+            position: relative;
+        }
+
+        .nw-suggest {
+            position: absolute;
+            top: 100%;
+            left: 0;
+            right: 0;
+            background: var(--terminal-bg);
+            border: 1px solid var(--matrix-green);
+            border-top: none;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+        }
+
+        .nw-suggest-label {
+            padding: 0.35rem 1rem 0.15rem;
+            font-size: 0.6rem;
+            letter-spacing: 0.08em;
+            color: var(--matrix-dim);
+        }
+
+        .nw-suggest-item {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+            padding: 0.5rem 1rem;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.85rem;
+            color: var(--matrix-green);
+            cursor: pointer;
+        }
+
+        .nw-suggest-item.empty {
+            cursor: default;
+        }
+
+        .nw-suggest-item.active,
+        .nw-suggest-item:not(.empty):hover {
+            background: var(--matrix-green);
+            color: var(--void);
+        }
+
+        .nw-suggest-item .nw-name {
+            flex: 1;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            white-space: nowrap;
+        }
+
+        .nw-suggest-item .nw-age {
+            font-size: 0.6rem;
+            color: var(--matrix-dim);
+        }
+
+        .nw-suggest-item.active .nw-age {
+            color: var(--void);
         }
 
         /* Send Button */
@@ -1390,6 +1514,7 @@
         <div class="prefix-hints">
             <span><kbd>c</kbd> new window</span>
             <span><kbd>,</kbd> rename window</span>
+            <span><kbd>&amp;</kbd> kill window</span>
             <span><kbd>w</kbd> window list</span>
             <span><kbd>n</kbd> next window</span>
             <span><kbd>p</kbd> prev window</span>
@@ -1405,6 +1530,7 @@
                 <h3>Prefix Commands (^B first)</h3>
                 <div class="help-row"><kbd>^B c</kbd> <span>Create new window</span></div>
                 <div class="help-row"><kbd>^B ,</kbd> <span>Rename window</span></div>
+                <div class="help-row"><kbd>^B &amp;</kbd> <span>Kill window (force)</span></div>
                 <div class="help-row"><kbd>^B w</kbd> <span>Window list</span></div>
                 <div class="help-row"><kbd>^B n</kbd> <span>Next window</span></div>
                 <div class="help-row"><kbd>^B p</kbd> <span>Previous window</span></div>
@@ -1460,6 +1586,11 @@
                     <span class="action-label">Rename Window</span>
                     <span class="action-shortcut">^B ,</span>
                 </button>
+                <button class="action-menu-item menu-kill" id="menuKillWindow">
+                    <span class="action-icon">&#x2715;</span>
+                    <span class="action-label">Kill Window</span>
+                    <span class="action-shortcut">^B &amp;</span>
+                </button>
                 <button class="action-menu-item" id="menuWindowList">
                     <span class="action-icon">W</span>
                     <span class="action-label">Window List</span>
@@ -1512,11 +1643,25 @@
         </div>
     </div>
 
-    <div class="modal-overlay" id="newWindowModal">
+    <div class="modal-overlay" id="killModal">
         <div class="rename-modal">
+            <div class="modal-header">Kill Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B &amp;</span></div>
+            <div class="kill-target" id="killTarget"></div>
+            <div class="kill-warning">Process will be killed.</div>
+            <div class="kill-actions">
+                <button class="menu-btn kill-confirm" id="killConfirm">KILL</button>
+                <button class="menu-btn" id="killCancel">CANCEL</button>
+            </div>
+            <div class="rename-hint">Enter to kill &bull; Esc to cancel</div>
+        </div>
+    </div>
+
+    <div class="modal-overlay" id="newWindowModal">
+        <div class="rename-modal new-window-modal">
             <div class="modal-header">New Claude Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B c</span></div>
             <input type="text" class="rename-input" id="newWindowInput" placeholder="Project name (a-z, 0-9, . _ -)" autocomplete="off" spellcheck="false">
             <div class="rename-hint">Enter to create • Esc to cancel</div>
+            <div class="nw-suggest" id="nwSuggest"></div>
         </div>
     </div>
 
@@ -1607,6 +1752,9 @@
         const renameInput = document.getElementById('renameInput');
         const newWindowModal = document.getElementById('newWindowModal');
         const newWindowInput = document.getElementById('newWindowInput');
+        const nwSuggest = document.getElementById('nwSuggest');
+        const killModal = document.getElementById('killModal');
+        const killTargetEl = document.getElementById('killTarget');
         const historyModal = document.getElementById('historyModal');
         const historyList = document.getElementById('historyList');
         const workingBar = document.getElementById('workingBar');
@@ -2747,6 +2895,201 @@
         }
 
 
+        // --- Kill Window ---------------------------------------------------
+
+        // Pinned when the confirmation opens, so the kill can only ever land on
+        // the window the user was shown — never on whatever happens to be
+        // selected by the time they confirm.
+        let killPendingTarget = '';
+
+        function openKillModal() {
+            const target = sessionSelect.value;
+            if (!target) {
+                showStatus('NO WINDOW SELECTED', 'error');
+                return;
+            }
+            // tmux tears down the whole session with its last window, which
+            // would take this server's own tmux down with it.
+            if (allWindows.length <= 1) {
+                showStatus('CANNOT KILL LAST WINDOW', 'error');
+                return;
+            }
+            const currentOption = sessionSelect.options[sessionSelect.selectedIndex];
+            killPendingTarget = target;
+            killTargetEl.textContent = currentOption
+                ? (currentOption.dataset.baseLabel || currentOption.textContent)
+                : target;
+            killModal.classList.add('show');
+        }
+
+        function closeKillModal() {
+            killModal.classList.remove('show');
+            commandInput.focus();
+        }
+
+        async function killCurrentWindow() {
+            const target = killPendingTarget;
+            if (!target) return;
+
+            try {
+                const response = await fetch('/api/kill-window', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ target }),
+                });
+                const data = await response.json();
+                if (data.success) {
+                    showStatus('KILLED: ' + target, 'success');
+                    // Drop the dead target from both selection stores before
+                    // reloading, so renderWindowOptions() falls through to a
+                    // live window instead of trying to keep a ghost visible.
+                    localStorage.removeItem('tmux-selected-target');
+                    sessionSelect.value = '';
+                    await loadWindows();
+                    startCapture();
+                } else {
+                    showStatus(data.error || 'KILL FAILED', 'error');
+                }
+            } catch (err) {
+                showStatus('CONNECTION ERROR', 'error');
+            }
+        }
+
+        // --- New-window autocomplete ---------------------------------------
+
+        // Cached per modal open: ~200 short names is a few KB, so one fetch
+        // buys keystroke-by-keystroke filtering with no round trip.
+        let projectDirs = [];
+        let nwSuggestions = [];
+        let nwActiveIndex = -1;
+        // What the user actually typed, kept aside so arrowing off the end of
+        // the list can put their own text back in the input.
+        let nwTypedValue = '';
+
+        const NW_SUGGEST_COUNT = 3;
+
+        async function loadProjectDirs() {
+            try {
+                const response = await fetch('/api/project-dirs');
+                const data = await response.json();
+                projectDirs = Array.isArray(data.dirs) ? data.dirs : [];
+            } catch (err) {
+                projectDirs = [];
+            }
+            renderNwSuggestions();
+        }
+
+        // Names arrive already restricted to [A-Za-z0-9._-] by the server's
+        // validate_window_name, so this is belt-and-braces for the one place
+        // that builds suggestion rows as an HTML string.
+        function escapeHtml(str) {
+            return String(str).replace(/[&<>"']/g, c => ({
+                '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;'
+            }[c]));
+        }
+
+        function relativeAge(mtime) {
+            if (!mtime) return '';
+            const mins = Math.floor((Date.now() / 1000 - mtime) / 60);
+            if (mins < 1) return 'now';
+            if (mins < 60) return mins + 'm';
+            const hours = Math.floor(mins / 60);
+            if (hours < 24) return hours + 'h';
+            return Math.floor(hours / 24) + 'd';
+        }
+
+        function computeNwSuggestions() {
+            // Filter on what the user TYPED, never on the live input value:
+            // arrowing onto a suggestion writes that name into the input, and
+            // re-filtering against it would collapse the list out from under
+            // the arrow keys.
+            const query = nwTypedValue.trim().toLowerCase();
+
+            if (!query) {
+                // Nothing typed yet: the most recent projects that aren't
+                // already open, since an open one is a switch, not a create.
+                // Read window names from allWindows through the same filter
+                // renderWindowOptions() uses, rather than parsing them back out
+                // of option labels — those carry busy/waiting markers.
+                const keepTarget = sessionSelect.value || localStorage.getItem('tmux-selected-target');
+                const openNames = new Set(visibleWindows(keepTarget).map(win => win.name));
+                return projectDirs
+                    .filter(d => !openNames.has(d.name))
+                    .slice(0, NW_SUGGEST_COUNT);
+            }
+
+            // Prefix matches read as "what I'm typing", so they rank above a
+            // mid-name hit. projectDirs is already mtime-desc, so each group
+            // stays newest-first without re-sorting.
+            const prefix = [];
+            const substring = [];
+            for (const d of projectDirs) {
+                const name = d.name.toLowerCase();
+                if (name.startsWith(query)) prefix.push(d);
+                else if (name.includes(query)) substring.push(d);
+            }
+            return prefix.concat(substring).slice(0, NW_SUGGEST_COUNT);
+        }
+
+        function renderNwSuggestions() {
+            nwSuggestions = computeNwSuggestions();
+            if (nwActiveIndex >= nwSuggestions.length) nwActiveIndex = -1;
+
+            const label = nwTypedValue.trim() ? 'MATCHES' : 'RECENT';
+            let html = `<div class="nw-suggest-label">${label}</div>`;
+            // Always render the full slot count: blank rows keep the list a
+            // fixed height so it never jumps as matches come and go.
+            for (let i = 0; i < NW_SUGGEST_COUNT; i++) {
+                const dir = nwSuggestions[i];
+                if (!dir) {
+                    // A non-breaking space, not an empty div: the blank row then
+                    // has the same line box as a filled one, so the list keeps
+                    // its height across any font metrics.
+                    html += '<div class="nw-suggest-item empty"><span class="nw-name">&nbsp;</span></div>';
+                    continue;
+                }
+                html += `<div class="nw-suggest-item${i === nwActiveIndex ? ' active' : ''}" data-index="${i}">`
+                     + `<span class="nw-name">${escapeHtml(dir.name)}</span>`
+                     + `<span class="nw-age">${relativeAge(dir.mtime)}</span>`
+                     + '</div>';
+            }
+            nwSuggest.innerHTML = html;
+
+            nwSuggest.querySelectorAll('.nw-suggest-item[data-index]').forEach(item => {
+                // mousedown, not click: the input must not lose focus first, or
+                // the on-screen keyboard closes out from under the user.
+                item.addEventListener('mousedown', (e) => {
+                    e.preventDefault();
+                    applyNwSuggestion(parseInt(item.dataset.index, 10));
+                });
+            });
+        }
+
+        // Selecting only fills the input — creating still takes an explicit
+        // Enter, so a stray tap can never spawn a window.
+        function applyNwSuggestion(index) {
+            const dir = nwSuggestions[index];
+            if (!dir) return;
+            nwActiveIndex = index;
+            newWindowInput.value = dir.name;
+            renderNwSuggestions();
+            newWindowInput.focus();
+        }
+
+        function moveNwActive(delta) {
+            if (nwSuggestions.length === 0) return;
+            const next = nwActiveIndex + delta;
+            if (next < 0) {
+                // Back above the list: restore whatever the user had typed.
+                nwActiveIndex = -1;
+                newWindowInput.value = nwTypedValue;
+                renderNwSuggestions();
+                return;
+            }
+            if (next >= nwSuggestions.length) return;
+            applyNwSuggestion(next);
+        }
+
         function renderWindowList() {
             windowList.innerHTML = modalWindows.map((win, i) => `
                 <div class="window-item ${i === modalSelectedIndex ? 'selected' : ''} ${win.current ? 'current' : ''}"
@@ -2851,14 +3194,30 @@
             // Handle new-window prompt
             if (newWindowModal.classList.contains('show')) {
                 if (e.key === 'Escape') { e.preventDefault(); closeNewWindowModal(); return true; }
+                if (e.key === 'ArrowDown') { e.preventDefault(); moveNwActive(1); return true; }
+                if (e.key === 'ArrowUp') { e.preventDefault(); moveNwActive(-1); return true; }
                 if (e.key === 'Enter') {
                     e.preventDefault();
+                    // Whatever is in the input wins — arrowing onto a suggestion
+                    // has already written it there.
                     const name = newWindowInput.value;
                     closeNewWindowModal();
                     submitNewWindow(name);
                     return true;
                 }
                 return true; // consume all keys while the prompt is open
+            }
+
+            // Handle kill-window confirmation
+            if (killModal.classList.contains('show')) {
+                if (e.key === 'Escape') { e.preventDefault(); closeKillModal(); return true; }
+                if (e.key === 'Enter') {
+                    e.preventDefault();
+                    closeKillModal();
+                    killCurrentWindow();
+                    return true;
+                }
+                return true; // consume all keys while the confirmation is open
             }
 
             // Handle rename modal
@@ -2976,7 +3335,13 @@
 
         function createNewWindow() {
             newWindowInput.value = '';
+            nwTypedValue = '';
+            nwActiveIndex = -1;
             newWindowModal.classList.add('show');
+            // Render immediately from the previous fetch so the list is never
+            // blank, then refresh — mtimes move while the page stays open.
+            renderNwSuggestions();
+            loadProjectDirs();
             // 50ms: the element is display:none until .show lands, and a synchronous
             // focus would also be stolen by closeActionMenu()'s commandInput.focus().
             setTimeout(() => { newWindowInput.focus(); }, 50);
@@ -2993,7 +3358,13 @@
             if (!name || !NEW_WINDOW_NAME_RE.test(name) || name.startsWith('-') || name === '.' || name === '..') {
                 showStatus('INVALID NAME', 'error');
                 newWindowModal.classList.add('show');
-                setTimeout(() => { newWindowInput.value = name; newWindowInput.focus(); }, 50);
+                nwActiveIndex = -1;
+                nwTypedValue = name;
+                setTimeout(() => {
+                    newWindowInput.value = name;
+                    newWindowInput.focus();
+                    renderNwSuggestions();
+                }, 50);
                 return;
             }
             try {
@@ -3032,6 +3403,10 @@
                 case ',':
                     // Rename window
                     openRenameModal();
+                    return true;
+                case '&':
+                    // Kill window (force)
+                    openKillModal();
                     return true;
                 case 'w':
                     openWindowModal();
@@ -3152,6 +3527,7 @@
 
         document.getElementById('menuUpload').addEventListener('click', () => { closeActionMenu(); openUploadPicker(); });
         document.getElementById('menuRenameWindow').addEventListener('click', () => { closeActionMenu(); openRenameModal(); });
+        document.getElementById('menuKillWindow').addEventListener('click', () => { closeActionMenu(); openKillModal(); });
         document.getElementById('menuWindowList').addEventListener('click', () => { closeActionMenu(); openWindowModal(); });
         document.getElementById('menuNextWindow').addEventListener('click', () => { closeActionMenu(); handlePrefixCommand('n'); });
         document.getElementById('menuPrevWindow').addEventListener('click', () => { closeActionMenu(); handlePrefixCommand('p'); });
@@ -3190,8 +3566,14 @@
         });
 
         commandInput.addEventListener('keydown', (e) => {
-            // Don't handle if modal is open or in prefix mode
-            if (windowModal.classList.contains('show') || historyModal.classList.contains('show') || prefixMode) return;
+            // Don't handle if modal is open or in prefix mode.
+            // killModal has to be listed explicitly: the other prompts own an
+            // input that takes focus, so this handler never fires while they
+            // are up. The kill confirmation has no input, commandInput keeps
+            // focus, and this handler's stopPropagation() would otherwise eat
+            // the Enter before handleModalKeydown ever sees it.
+            if (windowModal.classList.contains('show') || historyModal.classList.contains('show')
+                || killModal.classList.contains('show') || prefixMode) return;
 
             if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
@@ -3248,6 +3630,23 @@
         renameModal.addEventListener('click', (e) => {
             if (e.target === renameModal) closeRenameModal();
         });
+        newWindowInput.addEventListener('input', () => {
+            // Typing invalidates any arrow selection — the list is about to be
+            // a different list.
+            nwTypedValue = newWindowInput.value;
+            nwActiveIndex = -1;
+            renderNwSuggestions();
+        });
+
+        killModal.addEventListener('click', (e) => {
+            if (e.target === killModal) closeKillModal();
+        });
+        document.getElementById('killCancel').addEventListener('click', closeKillModal);
+        document.getElementById('killConfirm').addEventListener('click', () => {
+            closeKillModal();
+            killCurrentWindow();
+        });
+
         newWindowModal.addEventListener('click', (e) => {
             if (e.target === newWindowModal) closeNewWindowModal();
         });

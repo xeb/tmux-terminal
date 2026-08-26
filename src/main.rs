@@ -1034,6 +1034,136 @@ async fn rename_window(Json(payload): Json<RenameWindowRequest>) -> impl IntoRes
     }
 }
 
+#[derive(Deserialize)]
+struct KillWindowRequest {
+    target: String,
+}
+
+/// Unlike rename-window, an empty target must NOT default to "0". Rename is
+/// recoverable; killing the wrong window is not.
+fn validate_kill_target(raw: &str) -> Result<&str, String> {
+    let target = raw.trim();
+    if target.is_empty() {
+        return Err("target cannot be empty".to_string());
+    }
+    Ok(target)
+}
+
+/// Forcibly close a window. tmux SIGHUPs every process in it, which is the
+/// point: whatever was running there dies with the window.
+async fn kill_window(Json(payload): Json<KillWindowRequest>) -> impl IntoResponse {
+    let target = match validate_kill_target(&payload.target) {
+        Ok(t) => t.to_string(),
+        Err(e) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(ApiResponse {
+                    success: false,
+                    error: Some(e),
+                }),
+            );
+        }
+    };
+
+    let result = Command::new("tmux")
+        .args(["kill-window", "-t", &target])
+        .output();
+
+    match result {
+        Ok(output) => {
+            if output.status.success() {
+                (
+                    StatusCode::OK,
+                    Json(ApiResponse {
+                        success: true,
+                        error: None,
+                    }),
+                )
+            } else {
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                (
+                    StatusCode::BAD_REQUEST,
+                    Json(ApiResponse {
+                        success: false,
+                        error: Some(stderr.trim().to_string()),
+                    }),
+                )
+            }
+        }
+        Err(e) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(ApiResponse {
+                success: false,
+                error: Some(format!("Failed to kill window: {}", e)),
+            }),
+        ),
+    }
+}
+
+#[derive(Serialize)]
+struct ProjectDir {
+    name: String,
+    mtime: u64,
+}
+
+#[derive(Serialize)]
+struct ProjectDirsResponse {
+    dirs: Vec<ProjectDir>,
+}
+
+/// Directories under `base` that could serve as a window name, newest first.
+///
+/// mtime is the "last accessed" proxy: atime is unreliable under relatime and
+/// noatime mounts, while a project directory's mtime moves whenever files are
+/// added or removed in it. Names are held to `validate_window_name` because
+/// the caller turns the pick straight into a tmux window name, and ~/p also
+/// holds loose files and junk like `auth?code=...` that can never be one.
+fn collect_project_dirs(base: &std::path::Path) -> Vec<ProjectDir> {
+    let entries = match std::fs::read_dir(base) {
+        Ok(e) => e,
+        Err(_) => return Vec::new(),
+    };
+
+    let mut dirs: Vec<ProjectDir> = entries
+        .flatten()
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            if validate_window_name(&name).is_err() {
+                return None;
+            }
+            // metadata() follows symlinks, so a symlinked project counts.
+            let meta = entry.metadata().ok()?;
+            if !meta.is_dir() {
+                return None;
+            }
+            let mtime = meta
+                .modified()
+                .ok()
+                .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|d| d.as_secs())
+                .unwrap_or(0);
+            Some(ProjectDir { name, mtime })
+        })
+        .collect();
+
+    // Newest first; name as a tiebreaker so equal mtimes order predictably.
+    dirs.sort_by(|a, b| b.mtime.cmp(&a.mtime).then_with(|| a.name.cmp(&b.name)));
+    dirs
+}
+
+/// The whole list ships in one response when the new-window modal opens, so
+/// the client can filter keystroke-by-keystroke without a round trip.
+async fn project_dirs() -> impl IntoResponse {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    let base = std::path::PathBuf::from(format!("{}/p", home));
+    (
+        StatusCode::OK,
+        Json(ProjectDirsResponse {
+            dirs: collect_project_dirs(&base),
+        }),
+    )
+}
+
 #[derive(Serialize)]
 struct ConfigResponse {
     large_mode: bool,
@@ -1853,6 +1983,8 @@ async fn main() {
         .route("/api/new-window", post(new_window))
         .route("/api/new-window-named", post(new_window_named))
         .route("/api/rename-window", post(rename_window))
+        .route("/api/kill-window", post(kill_window))
+        .route("/api/project-dirs", get(project_dirs))
         .route("/api/move-window", post(move_window))
         .route("/api/speak", post(speak_output))
         .route("/api/speak-direct", post(speak_direct))
@@ -1886,7 +2018,7 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{parse_working, validate_window_name};
+    use super::{collect_project_dirs, parse_working, validate_kill_target, validate_window_name};
 
     #[test]
     fn reads_the_live_status_line() {
@@ -1963,5 +2095,74 @@ mod tests {
                   "a`b`", "a:b", "a\tb", "a\nb", "qu'ote", "quo\"te"] {
             assert!(validate_window_name(n).is_err(), "should reject {n:?}");
         }
+    }
+
+    // --- kill-window target validation ---
+
+    #[test]
+    fn kill_rejects_empty_target() {
+        // Unlike rename-window, an empty target must NOT fall back to "0":
+        // silently killing window 0 is unrecoverable.
+        assert!(validate_kill_target("").is_err());
+        assert!(validate_kill_target("   ").is_err());
+    }
+
+    #[test]
+    fn kill_accepts_a_real_target() {
+        assert_eq!(validate_kill_target("0:3").unwrap(), "0:3");
+        assert_eq!(validate_kill_target(" 0:3 ").unwrap(), "0:3");
+    }
+
+    // --- ~/p project directory listing ---
+
+    // No filetime crate in the tree; shell out to `touch -d @<secs>`, which is
+    // enough to pin an mtime for an ordering assertion.
+    fn touch_dir(base: &std::path::Path, name: &str, mtime_secs: u64) {
+        let dir = base.join(name);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::process::Command::new("touch")
+            .args(["-m", "-d", &format!("@{}", mtime_secs)])
+            .arg(&dir)
+            .status()
+            .unwrap();
+    }
+
+    #[test]
+    fn project_dirs_skips_files_and_invalid_names() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        touch_dir(base, "my-proj", 1000);
+        touch_dir(base, "auth", 2000);
+        // A directory whose name can never be a tmux window name.
+        touch_dir(base, "auth?code=ANUh", 3000);
+        // Plain files must not be offered as projects.
+        std::fs::write(base.join("attack.py"), b"x").unwrap();
+        std::fs::write(base.join("awscliv2.zip"), b"x").unwrap();
+
+        let names: Vec<String> = collect_project_dirs(base)
+            .into_iter()
+            .map(|d| d.name)
+            .collect();
+        assert_eq!(names, vec!["auth".to_string(), "my-proj".to_string()]);
+    }
+
+    #[test]
+    fn project_dirs_sorted_by_mtime_desc() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        touch_dir(base, "oldest", 1_700_000_000);
+        touch_dir(base, "newest", 1_700_002_000);
+        touch_dir(base, "middle", 1_700_001_000);
+
+        let dirs = collect_project_dirs(base);
+        let names: Vec<&str> = dirs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, vec!["newest", "middle", "oldest"]);
+        assert!(dirs[0].mtime >= dirs[1].mtime);
+    }
+
+    #[test]
+    fn project_dirs_on_missing_base_is_empty_not_a_panic() {
+        let dirs = collect_project_dirs(std::path::Path::new("/nope/does/not/exist"));
+        assert!(dirs.is_empty());
     }
 }
