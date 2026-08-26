@@ -1131,8 +1131,10 @@ fn collect_project_dirs(base: &std::path::Path) -> Vec<ProjectDir> {
             if validate_window_name(&name).is_err() {
                 return None;
             }
-            // metadata() follows symlinks, so a symlinked project counts.
-            let meta = entry.metadata().ok()?;
+            // fs::metadata, not entry.metadata(): the latter is an lstat and
+            // would drop every symlinked project (~/p/body -> ~/p/health/body).
+            // Following also skips dangling links, whose stat just fails.
+            let meta = std::fs::metadata(entry.path()).ok()?;
             if !meta.is_dir() {
                 return None;
             }
@@ -2158,6 +2160,29 @@ mod tests {
         let names: Vec<&str> = dirs.iter().map(|d| d.name.as_str()).collect();
         assert_eq!(names, vec!["newest", "middle", "oldest"]);
         assert!(dirs[0].mtime >= dirs[1].mtime);
+    }
+
+    #[test]
+    fn project_dirs_includes_symlinked_dirs_but_not_broken_or_file_links() {
+        let tmp = tempfile::tempdir().unwrap();
+        let base = tmp.path();
+        // The link target lives outside `base`, the way ~/p/body points off to
+        // ~/p/health/body, so the listing can only see it through the link.
+        let elsewhere = tempfile::tempdir().unwrap();
+        touch_dir(elsewhere.path(), "real-body", 1_700_000_000);
+        std::fs::write(elsewhere.path().join("notes.txt"), b"x").unwrap();
+
+        std::os::unix::fs::symlink(elsewhere.path().join("real-body"), base.join("body")).unwrap();
+        // A link to a plain file is no more a project than the file itself.
+        std::os::unix::fs::symlink(elsewhere.path().join("notes.txt"), base.join("notes")).unwrap();
+        // A dangling link must be skipped, not counted as a directory.
+        std::os::unix::fs::symlink(elsewhere.path().join("gone"), base.join("dangling")).unwrap();
+
+        let dirs = collect_project_dirs(base);
+        let names: Vec<&str> = dirs.iter().map(|d| d.name.as_str()).collect();
+        assert_eq!(names, vec!["body"]);
+        // The age shown is the target's, not the link's own mtime.
+        assert_eq!(dirs[0].mtime, 1_700_000_000);
     }
 
     #[test]
