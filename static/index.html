@@ -20,7 +20,7 @@
         /* Desktop layout - larger fonts and input */
         @media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
             :root {
-                --output-font-size: 10pt;
+                --output-font-size: 13pt;
                 --input-font-size: 14pt;
                 --input-height: 5.5em;
             }
@@ -137,7 +137,7 @@
             background: transparent;
             color: var(--matrix-dim);
             font-family: 'IBM Plex Mono', monospace;
-            font-size: var(--output-font-size, 6pt);
+            font-size: var(--output-font-size, 7.8pt);
             line-height: 1.2;
             padding: 2px 4px;
             white-space: pre-wrap;
@@ -1730,7 +1730,7 @@
             .then(r => r.json())
             .then(config => {
                 if (config.large_mode) {
-                    document.documentElement.style.setProperty('--output-font-size', '10pt');
+                    document.documentElement.style.setProperty('--output-font-size', '13pt');
                     document.documentElement.style.setProperty('--input-font-size', '14pt');
                     document.documentElement.style.setProperty('--input-height', '84px');
                 }
