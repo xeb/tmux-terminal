@@ -1,0 +1,22 @@
+
+╭─── OpenAI Codex ───╮
+
+› Use request_user_input to ask one question with exactly three options.
+
+• I’ll pause for your selection.
+
+
+  Question 1/1 (1 unanswered)
+  Which single option would you like to choose?
+
+  › 1. Explore Bright Forest Paths (Recommended)  Choose a guided route through a quiet
+                                                  forest filled with clear landmarks and
+                                                  gentle terrain throughout.
+    2. Navigate Distant Mountain Trails Today     Choose a demanding route across steep
+                                                  mountain trails with wider views.
+    3. Sail Calm Coastal Waters Together          Choose a relaxed voyage along a scenic
+                                                  coastline with steady pacing.
+    4. None of the above                          Optionally, add details in notes
+                                                  (tab).
+
+  tab to add notes | enter to submit answer | esc to interrupt

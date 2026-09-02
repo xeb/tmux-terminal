@@ -1,9 +1,9 @@
-//! Parser for Claude Code's interactive selection prompts as they appear in a
-//! captured tmux pane.
+//! Parser for Claude Code and Codex interactive selection prompts as they
+//! appear in a captured tmux pane.
 //!
-//! The web UI polls `capture-pane -p`, which strips ANSI attributes, so the
-//! colour Claude Code uses to mark the highlighted row never reaches us. Detection
-//! therefore runs on glyphs and structure alone:
+//! The server derives a plain-text copy from `capture-pane -e` for this parser,
+//! so the colour Claude Code and Codex use to mark highlighted rows does not
+//! participate in detection. Detection runs on glyphs and structure alone:
 //!
 //! ```text
 //! ──────────────────────────────────────────   <- top rule
@@ -31,6 +31,8 @@ use serde::Serialize;
 
 /// U+276F, the glyph Claude Code uses for the highlighted row.
 const CURSOR: char = '❯';
+/// U+203A, the glyph Codex uses for the highlighted row.
+const CODEX_CURSOR: char = '›';
 /// U+2500, the glyph the rules are drawn with.
 const RULE: char = '─';
 /// U+2610, the glyph in the header chip.
@@ -255,10 +257,12 @@ fn fingerprint_of(question: &str, layout: Layout, options: &[Opt]) -> String {
 /// Claude prints below it, so an answered prompt sitting in scrollback can never
 /// re-arm the picker.
 pub fn parse(pane: &str) -> Option<Picker> {
-    parse_dialog(pane).or_else(|| parse_review(pane))
+    parse_claude_dialog(pane)
+        .or_else(|| parse_claude_review(pane))
+        .or_else(|| parse_codex_dialog(pane))
 }
 
-fn parse_dialog(pane: &str) -> Option<Picker> {
+fn parse_claude_dialog(pane: &str) -> Option<Picker> {
     let all: Vec<&str> = pane.lines().collect();
 
     // Trailing blank lines are tmux padding the pane to its height.
@@ -432,7 +436,7 @@ fn parse_dialog(pane: &str) -> Option<Picker> {
 /// two-option dialog (digits work on it), and missing it strands the whole
 /// exchange: the card vanishes with every answer given but nothing submitted.
 /// Anchored on Claude Code's literal strings — fail closed on anything else.
-fn parse_review(pane: &str) -> Option<Picker> {
+fn parse_claude_review(pane: &str) -> Option<Picker> {
     let all: Vec<&str> = pane.lines().collect();
 
     let mut end = all.len();
@@ -497,6 +501,229 @@ fn parse_review(pane: &str) -> Option<Picker> {
         options,
         preview: None,
     })
+}
+
+/// Codex's `request_user_input` view is deliberately parsed separately from
+/// Claude's dialog. Its structure is compact and stable, but shares almost no
+/// delimiters with Claude's: there are no rules, the cursor is U+203A, and the
+/// footer talks about submitting an answer rather than navigating.
+///
+/// ```text
+///   Question 1/1 (1 unanswered)
+///   Which single option would you like to choose?
+///
+///   › 1. Explore Bright Forest Paths (Recommended)  A description that can
+///                                                   wrap onto more lines.
+///     2. Navigate Distant Mountain Trails Today     Another description.
+///
+///   tab to add notes | enter to submit answer | esc to interrupt
+/// ```
+///
+/// As with the Claude parser, both the header and footer must be present at the
+/// live tail of the pane. A numbered list in ordinary transcript output cannot
+/// arm the picker by itself.
+fn parse_codex_dialog(pane: &str) -> Option<Picker> {
+    let all: Vec<&str> = pane.lines().collect();
+
+    let mut end = all.len();
+    while end > 0 && all[end - 1].trim().is_empty() {
+        end -= 1;
+    }
+    if end == 0 {
+        return None;
+    }
+
+    // Narrow panes wrap this footer. It is separated from the options by a
+    // blank line, so join the final contiguous run instead of assuming one row.
+    let mut footer_idx = end;
+    let mut footer_parts: Vec<&str> = Vec::new();
+    while footer_idx > 0 && footer_parts.len() < 3 {
+        let part = all[footer_idx - 1].trim();
+        if part.is_empty() {
+            break;
+        }
+        footer_idx -= 1;
+        footer_parts.push(part);
+    }
+    footer_parts.reverse();
+    let footer = footer_parts.join(" ");
+    if !footer.contains("enter to submit answer") || !footer.contains("esc to interrupt") {
+        return None;
+    }
+
+    let search_start = footer_idx.saturating_sub(MAX_BLOCK_LINES);
+    let header_idx = (search_start..footer_idx)
+        .rev()
+        .find(|i| is_codex_question_header(all[*i].trim()))?;
+
+    let first_opt = (header_idx + 1..footer_idx)
+        .find(|i| scan_codex_option_row(all[*i]).is_some())?;
+    if first_opt <= header_idx + 1 {
+        return None;
+    }
+
+    let question = all[header_idx + 1..first_opt]
+        .iter()
+        .map(|line| line.trim())
+        .filter(|line| !line.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    if question.is_empty() {
+        return None;
+    }
+
+    let mut options: Vec<Opt> = Vec::new();
+    let mut cursor = None;
+    for line in &all[first_opt..footer_idx] {
+        if let Some(row) = scan_codex_option_row(line) {
+            if row.is_cursor {
+                cursor = Some(options.len());
+            }
+            let (label, description) = split_codex_option_text(&row.text);
+            if label.is_empty() {
+                return None;
+            }
+            options.push(Opt {
+                number: row.number,
+                label,
+                description,
+                // "None of the above" can carry notes, but it is still a
+                // directly-submittable answer. Marking it as meta would make
+                // the Claude-specific text-reply path type into the wrong TUI.
+                is_meta: false,
+            });
+        } else if !line.trim().is_empty() {
+            // Codex aligns wrapped descriptions under the description column.
+            // Once an option exists, any nonblank non-option row before the
+            // footer is one of those continuations.
+            let last = options.last_mut()?;
+            let continuation = line.trim();
+            match &mut last.description {
+                Some(description) => {
+                    description.push(' ');
+                    description.push_str(continuation);
+                }
+                None => last.description = Some(continuation.to_string()),
+            }
+        }
+    }
+
+    let cursor = cursor?;
+    if options.len() < 2 || options.iter().any(|option| option.number.is_none()) {
+        return None;
+    }
+
+    let header = all[header_idx]
+        .trim()
+        .split(" (")
+        .next()
+        .unwrap_or("Question")
+        .to_string();
+    let fingerprint = fingerprint_of(&question, Layout::List, &options);
+    Some(Picker {
+        fingerprint,
+        header: Some(header),
+        question,
+        cursor,
+        layout: Layout::List,
+        options,
+        preview: None,
+    })
+}
+
+fn is_codex_question_header(line: &str) -> bool {
+    let Some(rest) = line.strip_prefix("Question ") else {
+        return false;
+    };
+    let Some((position, state)) = rest.split_once(" (") else {
+        return false;
+    };
+    let Some((current, total)) = position.split_once('/') else {
+        return false;
+    };
+    current.parse::<usize>().is_ok()
+        && total.parse::<usize>().is_ok()
+        && state.ends_with("unanswered)")
+}
+
+fn scan_codex_option_row(line: &str) -> Option<Row> {
+    let chars = chars_of(line);
+    let mut i = 0;
+    while i < chars.len() && chars[i] == ' ' {
+        i += 1;
+    }
+    let indent = i;
+    if indent > 6 || i >= chars.len() {
+        return None;
+    }
+
+    let mut is_cursor = false;
+    if chars[i] == CODEX_CURSOR {
+        is_cursor = true;
+        i += 1;
+        while i < chars.len() && chars[i] == ' ' {
+            i += 1;
+        }
+    }
+
+    let number_start = i;
+    while i < chars.len() && chars[i].is_ascii_digit() {
+        i += 1;
+    }
+    if i == number_start || i >= chars.len() || chars[i] != '.' {
+        return None;
+    }
+    let digits: String = chars[number_start..i].iter().collect();
+    let number = digits.parse::<u32>().ok()?;
+    i += 1;
+    if i >= chars.len() || chars[i] != ' ' {
+        return None;
+    }
+    while i < chars.len() && chars[i] == ' ' {
+        i += 1;
+    }
+    let text: String = chars[i..].iter().collect();
+    let text = text.trim_end().to_string();
+    if text.is_empty() {
+        return None;
+    }
+
+    Some(Row {
+        is_cursor,
+        indent,
+        number: Some(number),
+        text,
+    })
+}
+
+/// Codex pads the label column with two or more spaces before the description.
+/// Description continuations are handled by `parse_codex_dialog`.
+fn split_codex_option_text(text: &str) -> (String, Option<String>) {
+    let bytes = text.as_bytes();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != b' ' {
+            i += 1;
+            continue;
+        }
+        let start = i;
+        while i < bytes.len() && bytes[i] == b' ' {
+            i += 1;
+        }
+        if i - start >= 2 {
+            let label = text[..start].trim_end().to_string();
+            let description = text[i..].trim();
+            return (
+                label,
+                if description.is_empty() {
+                    None
+                } else {
+                    Some(description.to_string())
+                },
+            );
+        }
+    }
+    (text.trim().to_string(), None)
 }
 
 /// True when the dialog is in text-entry state: the chrome (rule, numbered
@@ -613,6 +840,65 @@ mod tests {
         assert_eq!(p.options[3].label, "Chat about this");
         assert_eq!(p.options[3].number, None);
         assert!(p.options[3].is_meta);
+    }
+
+    #[test]
+    fn parses_codex_request_user_input() {
+        let p = parse(&fixture("codex.txt")).expect("should parse Codex picker");
+        assert_eq!(p.layout, Layout::List);
+        assert_eq!(p.header.as_deref(), Some("Question 1/1"));
+        assert_eq!(p.question, "Which single option would you like to choose?");
+        assert_eq!(p.cursor, 0);
+        assert_eq!(p.options.len(), 4);
+        assert_eq!(p.options[0].number, Some(1));
+        assert_eq!(p.options[0].label, "Explore Bright Forest Paths (Recommended)");
+        assert_eq!(
+            p.options[0].description.as_deref(),
+            Some(
+                "Choose a guided route through a quiet forest filled with clear landmarks and gentle terrain throughout."
+            )
+        );
+        assert_eq!(p.options[3].label, "None of the above");
+        assert_eq!(
+            p.options[3].description.as_deref(),
+            Some("Optionally, add details in notes (tab).")
+        );
+        assert!(!p.options[3].is_meta);
+        assert!(p.preview.is_none());
+    }
+
+    #[test]
+    fn codex_fingerprint_ignores_cursor_position() {
+        let base = fixture("codex.txt");
+        let a = parse(&base).unwrap();
+        let moved = base
+            .replace(
+                "  › 1. Explore Bright Forest Paths (Recommended)",
+                "    1. Explore Bright Forest Paths (Recommended)",
+            )
+            .replace(
+                "    2. Navigate Distant Mountain Trails Today",
+                "  › 2. Navigate Distant Mountain Trails Today",
+            );
+        let b = parse(&moved).unwrap();
+        assert_eq!(a.fingerprint, b.fingerprint);
+        assert_eq!(b.cursor, 1);
+    }
+
+    #[test]
+    fn rejects_answered_codex_question() {
+        let answered = fixture("codex.txt")
+            + "• Questions 1/1 answered\n  • Which single option?\n    answer: Alpha\n";
+        assert!(parse(&answered).is_none());
+    }
+
+    #[test]
+    fn parses_codex_footer_wrapped_by_a_narrow_pane() {
+        let narrow = fixture("codex.txt").replace(
+            "tab to add notes | enter to submit answer | esc to interrupt",
+            "tab to add notes | enter to submit answer | esc to\n  interrupt",
+        );
+        assert!(parse(&narrow).is_some());
     }
 
     #[test]

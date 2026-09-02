@@ -45,15 +45,111 @@ struct CaptureRequest {
     target: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+enum AgentKind {
+    Codex,
+}
+
 #[derive(Serialize)]
 struct CaptureResponse {
+    /// Plain text remains the source for prompt parsing, status detection, and
+    /// older clients.
     content: String,
+    /// The same pane with tmux's SGR attributes preserved. The web client uses
+    /// this to reproduce terminal foregrounds and backgrounds (notably Codex's
+    /// tinted composer) while mobile clients can safely ignore the new field.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    styled_content: Option<String>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     window_closed: bool,
-    /// A live Claude selection prompt at the tail of the pane, if there is one.
+    /// Which agent owns the active TUI, used for a small monochrome identity
+    /// badge. Omitted for shells and other programs.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    agent: Option<AgentKind>,
+    /// A live Claude or Codex selection prompt at the tail of the pane.
     /// Optional and additive, so existing clients (including `mobile/`) ignore it.
     #[serde(skip_serializing_if = "Option::is_none")]
     picker: Option<picker::Picker>,
+}
+
+fn detect_agent(pane: &str) -> Option<AgentKind> {
+    // Content detection avoids a second tmux process on every one-second pane
+    // poll. That extra display-message call doubled tmux command traffic and
+    // made unrelated operations such as creating/listing windows queue behind
+    // capture requests.
+    let tail: Vec<&str> = pane.lines().rev().take(80).collect();
+    let has_composer = tail.iter().any(|line| line.contains("Ask Codex to do anything"));
+    let has_question = tail.iter().any(|line| {
+        line.contains("enter to submit answer") || line.trim().starts_with("Question ")
+    });
+    let has_model_footer = tail
+        .iter()
+        .any(|line| line.trim_start().starts_with("gpt-") && line.contains(" · /"));
+    let has_active_input = tail.iter().take(15).any(|line| line.trim_start().starts_with('›'));
+    if has_composer || has_question || (has_model_footer && has_active_input) {
+        Some(AgentKind::Codex)
+    } else {
+        None
+    }
+}
+
+/// Strip terminal control sequences while preserving every displayed byte.
+/// `tmux capture-pane -e` emits SGR attributes so the browser can paint the
+/// pane faithfully; the picker and status parsers still need the exact plain
+/// text shape they consumed before styled capture was added.
+fn strip_ansi(input: &str) -> String {
+    let bytes = input.as_bytes();
+    let mut output = Vec::with_capacity(bytes.len());
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] != 0x1b {
+            output.push(bytes[i]);
+            i += 1;
+            continue;
+        }
+
+        if i + 1 >= bytes.len() {
+            break;
+        }
+        match bytes[i + 1] {
+            b'[' => {
+                // CSI: parameters/intermediates followed by one final byte.
+                i += 2;
+                while i < bytes.len() {
+                    let byte = bytes[i];
+                    i += 1;
+                    if (0x40..=0x7e).contains(&byte) {
+                        break;
+                    }
+                }
+            }
+            b']' => {
+                // OSC: terminated by BEL or String Terminator (ESC backslash).
+                i += 2;
+                while i < bytes.len() {
+                    if bytes[i] == 0x07 {
+                        i += 1;
+                        break;
+                    }
+                    if bytes[i] == 0x1b && i + 1 < bytes.len() && bytes[i + 1] == b'\\' {
+                        i += 2;
+                        break;
+                    }
+                    i += 1;
+                }
+            }
+            b'(' | b')' | b'*' | b'+' | b'-' | b'.' | b'/' => {
+                // Charset selection: ESC, intermediate, final byte.
+                i = (i + 3).min(bytes.len());
+            }
+            _ => {
+                // Other two-byte ESC sequences are not displayed either.
+                i += 2;
+            }
+        }
+    }
+    String::from_utf8(output).expect("removing ASCII escapes preserves UTF-8")
 }
 
 async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse {
@@ -63,25 +159,46 @@ async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse 
         payload.target
     };
 
-    // Capture the pane content with history
+    // Capture with terminal attributes. Plain text is derived from this one
+    // snapshot so what the user sees and what the picker verifies cannot drift.
     let result = Command::new("tmux")
-        .args(["capture-pane", "-p", "-t", &target, "-S", "-1000"])
+        .args(["capture-pane", "-p", "-e", "-t", &target, "-S", "-1000"])
         .output();
 
     match result {
         Ok(output) => {
             if output.status.success() {
-                let content = String::from_utf8_lossy(&output.stdout).to_string();
+                let styled_content = String::from_utf8_lossy(&output.stdout).to_string();
+                let content = strip_ansi(&styled_content);
+                let agent = detect_agent(&content);
                 // Parsed server-side and only here. If the client parsed too, the
                 // renderer and the committer would drift, and the failure mode is
                 // a card that shows one option and sends another.
                 let picker = picker::parse(&content);
-                (StatusCode::OK, Json(CaptureResponse { content, window_closed: false, picker }))
+                (StatusCode::OK, Json(CaptureResponse {
+                    content,
+                    styled_content: Some(styled_content),
+                    window_closed: false,
+                    agent,
+                    picker,
+                }))
             } else {
-                (StatusCode::OK, Json(CaptureResponse { content: String::new(), window_closed: true, picker: None }))
+                (StatusCode::OK, Json(CaptureResponse {
+                    content: String::new(),
+                    styled_content: None,
+                    window_closed: true,
+                    agent: None,
+                    picker: None,
+                }))
             }
         }
-        Err(_) => (StatusCode::OK, Json(CaptureResponse { content: String::new(), window_closed: true, picker: None })),
+        Err(_) => (StatusCode::OK, Json(CaptureResponse {
+            content: String::new(),
+            styled_content: None,
+            window_closed: true,
+            agent: None,
+            picker: None,
+        })),
     }
 }
 
@@ -755,8 +872,66 @@ fn validate_window_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
+const DEFAULT_NEW_WINDOW_COMMAND: &str = "codex --yolo";
+
+/// Give Codex the project instructions Claude already uses without duplicating
+/// them. `symlink_metadata` deliberately does not follow the destination: a
+/// broken AGENTS.md symlink is still an existing entry and must not be replaced.
+fn ensure_agents_link(project_dir: &std::path::Path) -> Result<bool, String> {
+    let claude = project_dir.join("CLAUDE.md");
+    let agents = project_dir.join("AGENTS.md");
+
+    match std::fs::metadata(&claude) {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => {
+            return Err(format!("could not inspect {}: {}", claude.display(), error));
+        }
+    }
+
+    match std::fs::symlink_metadata(&agents) {
+        Ok(_) => return Ok(false),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(format!("could not inspect {}: {}", agents.display(), error));
+        }
+    }
+
+    match std::os::unix::fs::symlink(std::path::Path::new("./CLAUDE.md"), &agents) {
+        Ok(()) => Ok(true),
+        // Another creator may have won the check/create race. The required
+        // postcondition is satisfied and, critically, nothing was overwritten.
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => Ok(false),
+        Err(error) => Err(format!("could not create {}: {}", agents.display(), error)),
+    }
+}
+
+fn read_pane_cwd(target: &str) -> Result<std::path::PathBuf, String> {
+    let output = Command::new("tmux")
+        .args(["display-message", "-p", "-t", target, "#{pane_current_path}"])
+        .output()
+        .map_err(|error| format!("could not inspect new window: {}", error))?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if path.is_empty() {
+        return Err("new window reported an empty working directory".to_string());
+    }
+    Ok(std::path::PathBuf::from(path))
+}
+
+/// Start the default agent in a freshly-created interactive shell. Keep the
+/// literal payload and Enter in separate tmux calls: with `-l`, putting Enter
+/// in the same argv would type the word rather than press the key.
+fn launch_default_agent(target: &str) -> Result<(), String> {
+    send_keys_literal(target, DEFAULT_NEW_WINDOW_COMMAND)?;
+    send_keys(target, &["Enter".to_string()])
+}
+
 async fn new_window() -> impl IntoResponse {
-    // Create a new tmux window
+    // Create a new tmux window and start the same default agent as the named
+    // project flow.
     let result = Command::new("tmux")
         .args(["new-window", "-P", "-F", "#{session_name}:#{window_index}"])
         .output();
@@ -765,6 +940,39 @@ async fn new_window() -> impl IntoResponse {
         Ok(output) => {
             if output.status.success() {
                 let target = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let project_dir = match read_pane_cwd(&target) {
+                    Ok(path) => path,
+                    Err(error) => {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            Json(serde_json::json!({
+                                "success": false,
+                                "target": target,
+                                "error": error,
+                            })),
+                        );
+                    }
+                };
+                if let Err(error) = ensure_agents_link(&project_dir) {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "success": false,
+                            "target": target,
+                            "error": error,
+                        })),
+                    );
+                }
+                if let Err(error) = launch_default_agent(&target) {
+                    return (
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        Json(serde_json::json!({
+                            "success": false,
+                            "target": target,
+                            "error": error,
+                        })),
+                    );
+                }
                 (
                     StatusCode::OK,
                     Json(serde_json::json!({
@@ -879,7 +1087,8 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
         }
     };
 
-    // 4. Verify the pane actually started in <dir> BEFORE launching claude --yolo
+    // 4. Verify the pane actually started in <dir> BEFORE launching Codex in
+    //    YOLO mode
     //    (which skips permission prompts). Never fire it in an unintended dir.
     let expected = std::fs::canonicalize(&dir).unwrap_or_else(|_| std::path::PathBuf::from(&dir));
     let actual = Command::new("tmux")
@@ -902,13 +1111,32 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
         );
     }
 
-    // 5. Launch. -l on the payload only; Enter is a separate send-keys.
-    let _ = Command::new("tmux")
-        .args(["send-keys", "-t", &window_id, "-l", "claude --yolo"])
-        .output();
-    let _ = Command::new("tmux")
-        .args(["send-keys", "-t", &window_id, "Enter"])
-        .output();
+    // 5. Reuse Claude's project instructions when Codex does not already have
+    //    its own AGENTS.md. Never replace an existing file or symlink.
+    if let Err(error) = ensure_agents_link(&expected) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false,
+                "error": error,
+                "window_id": window_id,
+                "target": target,
+            })),
+        );
+    }
+
+    // 6. Launch the default agent only after the instruction link is ready.
+    if let Err(error) = launch_default_agent(&window_id) {
+        return (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false,
+                "error": error,
+                "window_id": window_id,
+                "target": target,
+            })),
+        );
+    }
 
     (
         StatusCode::OK,
@@ -1100,7 +1328,7 @@ async fn kill_window(Json(payload): Json<KillWindowRequest>) -> impl IntoRespons
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct ProjectDir {
     name: String,
     mtime: u64,
@@ -1109,6 +1337,49 @@ struct ProjectDir {
 #[derive(Serialize)]
 struct ProjectDirsResponse {
     dirs: Vec<ProjectDir>,
+}
+
+const PROJECT_DIR_CACHE_TTL: std::time::Duration = std::time::Duration::from_secs(60);
+
+struct ProjectDirCache {
+    dirs: Vec<ProjectDir>,
+    refreshed_at: std::time::Instant,
+    refreshing: bool,
+}
+
+static PROJECT_DIR_CACHE: std::sync::OnceLock<std::sync::Mutex<ProjectDirCache>> =
+    std::sync::OnceLock::new();
+
+fn project_dirs_base() -> std::path::PathBuf {
+    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
+    std::path::PathBuf::from(format!("{}/p", home))
+}
+
+fn project_dir_cache() -> &'static std::sync::Mutex<ProjectDirCache> {
+    PROJECT_DIR_CACHE.get_or_init(|| {
+        std::sync::Mutex::new(ProjectDirCache {
+            dirs: Vec::new(),
+            refreshed_at: std::time::Instant::now() - PROJECT_DIR_CACHE_TTL,
+            refreshing: false,
+        })
+    })
+}
+
+fn lock_project_dir_cache() -> std::sync::MutexGuard<'static, ProjectDirCache> {
+    project_dir_cache()
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Pay the slow filesystem scan once during service startup. `~/p` lives on a
+/// filesystem where reading metadata for ~200 projects can take several
+/// seconds; doing that in the modal request made RECENT appear broken.
+fn prime_project_dir_cache() {
+    let dirs = collect_project_dirs(&project_dirs_base());
+    let mut cache = lock_project_dir_cache();
+    cache.dirs = dirs;
+    cache.refreshed_at = std::time::Instant::now();
+    cache.refreshing = false;
 }
 
 /// Directories under `base` that could serve as a window name, newest first.
@@ -1156,13 +1427,31 @@ fn collect_project_dirs(base: &std::path::Path) -> Vec<ProjectDir> {
 /// The whole list ships in one response when the new-window modal opens, so
 /// the client can filter keystroke-by-keystroke without a round trip.
 async fn project_dirs() -> impl IntoResponse {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let base = std::path::PathBuf::from(format!("{}/p", home));
+    let (dirs, should_refresh) = {
+        let mut cache = lock_project_dir_cache();
+        let stale = cache.refreshed_at.elapsed() >= PROJECT_DIR_CACHE_TTL;
+        let should_refresh = stale && !cache.refreshing;
+        if should_refresh {
+            cache.refreshing = true;
+        }
+        (cache.dirs.clone(), should_refresh)
+    };
+
+    // Stale-while-refresh: a modal always gets the last complete list
+    // immediately. Only the background worker pays the slow metadata scan.
+    if should_refresh {
+        tokio::task::spawn_blocking(|| {
+            let refreshed = collect_project_dirs(&project_dirs_base());
+            let mut cache = lock_project_dir_cache();
+            cache.dirs = refreshed;
+            cache.refreshed_at = std::time::Instant::now();
+            cache.refreshing = false;
+        });
+    }
+
     (
         StatusCode::OK,
-        Json(ProjectDirsResponse {
-            dirs: collect_project_dirs(&base),
-        }),
+        Json(ProjectDirsResponse { dirs }),
     )
 }
 
@@ -1743,16 +2032,21 @@ fn trigger_bugfix_window() {
         .unwrap_or(false);
 
     if !check {
-        // Create window and start claude
+        // Create the internal bug-fix window with the same default agent used
+        // by the interactive new-window flow.
         let _ = Command::new("tmux")
             .args(["new-window", "-n", window_name])
             .output();
         let project_dir = "/media/xeb/GreyArea/projects/tmux-terminal";
-        let start_cmd = format!("cd {} && claude", project_dir);
+        if let Err(error) = ensure_agents_link(std::path::Path::new(project_dir)) {
+            eprintln!("Could not prepare Codex instructions: {}", error);
+            return;
+        }
+        let start_cmd = format!("cd {} && {}", project_dir, DEFAULT_NEW_WINDOW_COMMAND);
         let _ = Command::new("tmux")
             .args(["send-keys", "-t", window_name, &start_cmd, "Enter"])
             .output();
-        // Give claude a moment to start
+        // Give Codex a moment to start.
         std::thread::sleep(std::time::Duration::from_secs(4));
     }
 
@@ -1960,6 +2254,10 @@ async fn main() {
     // Load .env file (ignore if missing)
     let _ = dotenvy::dotenv();
 
+    // Build the expensive RECENT-project list before accepting requests. All
+    // later refreshes are stale-while-refresh and never hold up the modal.
+    prime_project_dir_cache();
+
     let config = Arc::new(AppConfig {
         gemini_api_key: std::env::var("GEMINI_API_KEY").unwrap_or_default(),
         gemini_model: std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3-flash-preview".to_string()),
@@ -2020,7 +2318,93 @@ async fn main() {
 
 #[cfg(test)]
 mod tests {
-    use super::{collect_project_dirs, parse_working, validate_kill_target, validate_window_name};
+    use super::{
+        collect_project_dirs, detect_agent, ensure_agents_link, parse_working, strip_ansi,
+        validate_kill_target, validate_window_name, AgentKind, DEFAULT_NEW_WINDOW_COMMAND,
+    };
+
+    #[test]
+    fn new_windows_default_to_codex_yolo() {
+        assert_eq!(DEFAULT_NEW_WINDOW_COMMAND, "codex --yolo");
+    }
+
+    #[test]
+    fn creates_agents_link_to_existing_claude_instructions() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("CLAUDE.md"), "project rules\n").unwrap();
+
+        assert!(ensure_agents_link(project.path()).unwrap());
+        let agents = project.path().join("AGENTS.md");
+        assert_eq!(
+            std::fs::read_link(&agents).unwrap(),
+            std::path::PathBuf::from("./CLAUDE.md")
+        );
+        assert_eq!(std::fs::read_to_string(agents).unwrap(), "project rules\n");
+    }
+
+    #[test]
+    fn does_not_create_agents_without_claude_instructions() {
+        let project = tempfile::tempdir().unwrap();
+        assert!(!ensure_agents_link(project.path()).unwrap());
+        assert!(std::fs::symlink_metadata(project.path().join("AGENTS.md")).is_err());
+    }
+
+    #[test]
+    fn never_replaces_an_existing_agents_file() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("CLAUDE.md"), "claude rules\n").unwrap();
+        std::fs::write(project.path().join("AGENTS.md"), "codex rules\n").unwrap();
+
+        assert!(!ensure_agents_link(project.path()).unwrap());
+        assert_eq!(
+            std::fs::read_to_string(project.path().join("AGENTS.md")).unwrap(),
+            "codex rules\n"
+        );
+    }
+
+    #[test]
+    fn never_replaces_a_broken_agents_symlink() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("CLAUDE.md"), "claude rules\n").unwrap();
+        let agents = project.path().join("AGENTS.md");
+        std::os::unix::fs::symlink("./missing.md", &agents).unwrap();
+
+        assert!(!ensure_agents_link(project.path()).unwrap());
+        assert_eq!(
+            std::fs::read_link(agents).unwrap(),
+            std::path::PathBuf::from("./missing.md")
+        );
+    }
+
+    #[test]
+    fn detects_codex_without_mistaking_an_ordinary_node_process() {
+        let codex = "╭── OpenAI Codex (v0.152.0) ──╮\n\n› Ask Codex to do anything\n";
+        assert_eq!(detect_agent(codex), Some(AgentKind::Codex));
+        assert_eq!(detect_agent("$ node server.js\nlistening\n"), None);
+    }
+
+    #[test]
+    fn detects_codex_question_after_the_banner_leaves_history() {
+        let question = "  Question 1/1 (1 unanswered)\n  1. Alpha\n\n  enter to submit answer | esc to interrupt\n";
+        assert_eq!(detect_agent(question), Some(AgentKind::Codex));
+    }
+
+    #[test]
+    fn styled_capture_strips_to_the_original_pane_text() {
+        let styled = "\x1b[1;38;5;6m› 1. Alpha\x1b[0m\n\x1b[48;2;31;31;31m  composer  \x1b[49m\n";
+        assert_eq!(strip_ansi(styled), "› 1. Alpha\n  composer  \n");
+    }
+
+    #[test]
+    fn styled_capture_strips_osc_sequences() {
+        let styled = "before\x1b]8;;https://example.com\x07link\x1b]8;;\x1b\\ after";
+        assert_eq!(strip_ansi(styled), "beforelink after");
+    }
+
+    #[test]
+    fn styled_capture_strips_charset_selectors() {
+        assert_eq!(strip_ansi("a\x1b(0b\x1b(Bc"), "abc");
+    }
 
     #[test]
     fn reads_the_live_status_line() {
