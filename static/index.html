@@ -1375,9 +1375,10 @@
             .upload-bar-fill { transition: none; }
         }
 
-        /* Claude working indicator. Indeterminate on purpose: Claude reports
-           elapsed time, never a total, so a filling bar would be a fabricated
-           percentage. The sweep says "running", the text says how long. */
+        /* Agent working indicator. Indeterminate on purpose: Claude and Codex
+           report elapsed time, never a total, so a filling bar would be a
+           fabricated percentage. The sweep says "running", the text says how
+           long. */
         .working-bar {
             padding: 0.35rem 0.5rem 0.45rem;
             border-bottom: 1px solid var(--matrix-dim);
@@ -1481,7 +1482,7 @@
             <button class="menu-btn new-window-btn" id="newWindowBtn" title="New window" aria-label="New window">+</button>
             <button class="menu-btn" id="menuBtn">☰ MENU</button>
             <button class="waiting-pill" id="waitingPill" title="Jump to a window waiting on a question"></button>
-            <button class="waiting-pill busy-pill" id="busyPill" title="Jump to a window Claude is working in"></button>
+            <button class="waiting-pill busy-pill" id="busyPill" title="Jump to a window an agent is working in"></button>
             <input type="file" id="fileInput" multiple hidden>
         </div>
 
@@ -2088,7 +2089,7 @@
             return outputContent.contains(range.commonAncestorContainer);
         }
 
-        /* ── Claude working indicator ──────────────────────────────────────
+        /* ── Agent working indicator ───────────────────────────────────────
            Claude Code prints one status line while it is running:
 
                ✻ Misting… (1m 32s · ↓ 5.1k tokens · thought for 4s)
@@ -2097,11 +2098,27 @@
 
                ✻ Worked for 3m 16s
 
-           The parenthesised live timer is the discriminator — the spinner
-           glyph and the verb appear in both, so keying on either would leave
-           the bar running forever after Claude finished. Read from the pane we
-           already poll, so no extra request and no second source of truth. */
-        const WORKING_LINE = /(?:^|\s)([A-Za-z][A-Za-z ]{0,20})…\s*\(([^)]*\b\d+s\b[^)]*)\)/;
+           Codex uses a different live line:
+
+               • Working (4m 21s • esc to interrupt) · 1 background terminal running
+
+           A live timer is the discriminator in both formats. Read from the
+           pane we already poll, so no extra request and no second source of
+           truth. */
+        const CLAUDE_WORKING_LINE = /(?:^|\s)([A-Za-z][A-Za-z ]{0,20})…\s*\(([^)]*\b\d+s\b[^)]*)\)/;
+        const CODEX_WORKING_LINE = /^\s*(?:•\s*)?Working\s+\(([^)]*\b\d+s\b[^)]*)\)(?:\s*·\s*(.*))?\s*$/;
+
+        function parseCodexWorking(line) {
+            const match = line.match(CODEX_WORKING_LINE);
+            if (!match) return null;
+            const meta = [match[1].split('•')[0].trim()];
+            if (match[2]) {
+                meta.push(...match[2].split(' · ')
+                    .map(part => part.trim())
+                    .filter(part => part && !part.startsWith('/')));
+            }
+            return { verb: 'Working', meta: meta.join(' · ') };
+        }
 
         function parseWorking(content) {
             if (!content) return null;
@@ -2109,7 +2126,9 @@
             // Only the tail: the same line from an earlier turn is still in
             // scrollback, and matching it would pin the bar on permanently.
             for (let i = lines.length - 1; i >= Math.max(0, lines.length - 30); i--) {
-                const match = lines[i].match(WORKING_LINE);
+                const codex = parseCodexWorking(lines[i]);
+                if (codex) return codex;
+                const match = lines[i].match(CLAUDE_WORKING_LINE);
                 if (match) return { verb: match[1].trim(), meta: match[2].trim() };
             }
             return null;

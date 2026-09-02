@@ -509,10 +509,10 @@ struct WindowStatus {
     target: String,
     /// A prompt is on screen and nothing moves until it is answered.
     waiting: bool,
-    /// Claude's live status verb ("Wrangling"), absent when it is not working.
+    /// The agent's live status verb ("Wrangling" or "Working"), absent when idle.
     #[serde(skip_serializing_if = "Option::is_none")]
     verb: Option<String>,
-    /// The parenthesised meta from the same line: "10m 40s · ↓ 25.6k tokens".
+    /// Elapsed time and useful detail from the same live status line.
     #[serde(skip_serializing_if = "Option::is_none")]
     meta: Option<String>,
 }
@@ -525,23 +525,50 @@ struct WindowStatus {
 ///
 ///     ✻ Worked for 3m 16s
 ///
-/// The parenthesised live timer is the discriminator — the spinner glyph and
-/// the verb appear in both, so keying on either would report a finished window
-/// as busy forever. Mirrors WORKING_LINE in static/index.html; the two must
-/// stay in step.
+/// Codex renders its live state as:
+///
+///     • Working (4m 21s • esc to interrupt) · 1 background terminal running
+///
+/// Both formats have a live timer. That is the discriminator that keeps stale
+/// transcript summaries from reporting a finished window as busy forever.
+/// Mirrors the working-line parsers in static/index.html; the two must stay in
+/// step.
 fn parse_working(pane: &str) -> Option<(String, String)> {
-    let re = regex::Regex::new(r"(?:^|\s)([A-Za-z][A-Za-z ]{0,20})…\s*\(([^)]*\b\d+s\b[^)]*)\)")
-        .ok()?;
+    let claude_re = regex::Regex::new(
+        r"(?:^|\s)([A-Za-z][A-Za-z ]{0,20})…\s*\(([^)]*\b\d+s\b[^)]*)\)",
+    )
+    .ok()?;
+    let codex_re = regex::Regex::new(
+        r"^\s*(?:•\s*)?Working\s+\(([^)]*\b\d+s\b[^)]*)\)(?:\s*·\s*(.*))?\s*$",
+    )
+    .ok()?;
     // Only the tail: the same line from an earlier turn is still in scrollback,
     // and matching it would pin every window on permanently.
     let lines: Vec<&str> = pane.lines().collect();
     let start = lines.len().saturating_sub(30);
     for line in lines[start..].iter().rev() {
-        if let Some(caps) = re.captures(line) {
+        if let Some(caps) = claude_re.captures(line) {
             return Some((
                 caps[1].trim().to_string(),
                 caps[2].trim().to_string(),
             ));
+        }
+        if let Some(caps) = codex_re.captures(line) {
+            // Keyboard and slash-command hints are useful in tmux but noisy in
+            // the compact web indicator. Keep time and actual task state only.
+            let elapsed = caps[1].split('•').next()?.trim();
+            let mut meta = vec![elapsed.to_string()];
+            if let Some(suffix) = caps.get(2) {
+                meta.extend(
+                    suffix
+                        .as_str()
+                        .split(" · ")
+                        .map(str::trim)
+                        .filter(|part| !part.is_empty() && !part.starts_with('/'))
+                        .map(str::to_string),
+                );
+            }
+            return Some(("Working".to_string(), meta.join(" · ")));
         }
     }
     None
@@ -2412,6 +2439,22 @@ mod tests {
         let (verb, meta) = parse_working(pane).expect("should see a working line");
         assert_eq!(verb, "Wrangling");
         assert_eq!(meta, "10m 40s · ↓ 25.6k tokens");
+    }
+
+    #[test]
+    fn reads_codex_live_status_line() {
+        let pane = "› Add a food indicator\n\n• Working (4m 21s • esc to interrupt) · 1 background terminal running · /ps to view · /stop to close\n\n› Ask Codex to do anything\n";
+        let (verb, meta) = parse_working(pane).expect("should see Codex working");
+        assert_eq!(verb, "Working");
+        assert_eq!(meta, "4m 21s · 1 background terminal running");
+    }
+
+    #[test]
+    fn reads_codex_live_status_without_background_tasks() {
+        let pane = "• Working (9s • esc to interrupt)\n";
+        let (verb, meta) = parse_working(pane).expect("should see Codex working");
+        assert_eq!(verb, "Working");
+        assert_eq!(meta, "9s");
     }
 
     // Claude redraws the status line in place, so when it stops, the live line
