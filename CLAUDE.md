@@ -32,10 +32,33 @@ Static files served from `static/` directory with no-cache headers.
 ```bash
 cargo build --release    # Production build
 cargo run               # Development
+cargo test               # Unit tests (parsers, agent table, symlinks, trust prompts)
 ```
+
+## Deploying
+
+`make install` cannot overwrite the binary while the service is running
+("Text file busy"), and `make update` runs `git pull` first. To deploy a local
+build: `make stop`, copy `target/release/tmux-terminal`, `static/` and
+`scripts/` into `~/bin/tmux-terminal/`, then `make start`. Verify with
+`curl -s -o /dev/null -w '%{http_code}' http://localhost:5533/api/windows`.
 
 ## Key Implementation Details
 
+- New windows pick an agent (`claude`, `codex`, `agy`, `eunice`) and a tmux
+  session in the new-window modal. Each agent launches with approvals bypassed
+  (`Agent::command` in `src/main.rs`); the modal shows the exact command.
+  A missing `agent` field means Codex, so older clients keep working.
+- New windows go to session `0` by default. `MASTER` holds the backend tmux
+  control processes and is only ever an explicit pick.
+- When a project has a `CLAUDE.md`, creating a window guarantees `AGENTS.md`
+  and `GEMINI.md` symlinks to it. Existing files or symlinks are never replaced.
+- Claude, Codex and AGY ask "do you trust this folder?" on first launch in a
+  directory; the server answers yes for windows it just created
+  (`auto_accept_trust_prompt`). EUNICE never asks.
+- The working pill and agent badge recognise Claude, Codex, AGY and EUNICE.
+  The parsers live in both `src/main.rs` and `static/index.html` and must stay
+  in step.
 - Uses `-l` flag with `send-keys` for literal input (prevents escape sequence interpretation)
 - Captures last 1000 lines of scrollback with `-S -1000`
 - Window selection persisted in browser localStorage

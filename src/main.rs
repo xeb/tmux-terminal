@@ -49,6 +49,8 @@ struct CaptureRequest {
 #[serde(rename_all = "lowercase")]
 enum AgentKind {
     Codex,
+    Agy,
+    Eunice,
 }
 
 #[derive(Serialize)]
@@ -88,10 +90,68 @@ fn detect_agent(pane: &str) -> Option<AgentKind> {
         .any(|line| line.trim_start().starts_with("gpt-") && line.contains(" · /"));
     let has_active_input = tail.iter().take(15).any(|line| line.trim_start().starts_with('›'));
     if has_composer || has_question || (has_model_footer && has_active_input) {
-        Some(AgentKind::Codex)
-    } else {
-        None
+        return Some(AgentKind::Codex);
     }
+    if tail.iter().any(|line| agy_footer(line).is_some()) {
+        return Some(AgentKind::Agy);
+    }
+    if tail.iter().any(|line| is_eunice_marker(line)) {
+        return Some(AgentKind::Eunice);
+    }
+    None
+}
+
+/// AGY (the Antigravity CLI) keeps one status line at the bottom of its screen:
+///
+///     ? for shortcuts                      Gemini 3.8 Flash · high · 1 task(s) · /tasks
+///
+/// and swaps the left-hand hint for `esc to cancel` while the agent is busy.
+/// Claude Code prints the same `? for shortcuts` hint, so the `model · effort`
+/// tail is what identifies AGY. Returns the hint when the line is AGY's.
+fn agy_footer(line: &str) -> Option<&str> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"^\s*(\? for shortcuts|esc to cancel)\s{2,}\S.*·\s*(?:high|medium|low)\b")
+            .expect("static regex")
+    });
+    re.captures(line).map(|caps| caps.get(1).map_or("", |m| m.as_str()))
+}
+
+/// AGY's spinner line while a turn runs: a braille glyph, then what it is doing.
+///
+///     ⣟  Generating...
+///     ⣟  Running command...
+fn agy_spinner_verb(line: &str) -> Option<String> {
+    static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let re = RE.get_or_init(|| {
+        regex::Regex::new(r"^\s*[\u2800-\u28FF]\s+(\S.*?)\.\.\.\s*$").expect("static regex")
+    });
+    re.captures(line).map(|caps| caps[1].trim().to_string())
+}
+
+/// Lines only EUNICE's TUI draws: its banner, the rule above its composer, the
+/// composer footer, and its tool-call arrow.
+fn is_eunice_marker(line: &str) -> bool {
+    static TOOL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let tool = TOOL.get_or_init(|| regex::Regex::new(r"^\s*→ [A-Za-z_][\w-]*\s*$").expect("static regex"));
+    let trimmed = line.trim();
+    is_eunice_footer(line)
+        || line.contains("/quit or Ctrl+D to exit")
+        || (trimmed.starts_with('─') && trimmed.ends_with(" eunice"))
+        || tool.is_match(line)
+}
+
+fn is_eunice_footer(line: &str) -> bool {
+    line.contains("↵ send") && line.contains("esc clear")
+}
+
+/// EUNICE prints `✻ Thinking…` once when a turn starts and never redraws it,
+/// so the line alone cannot say whether the turn is still running.
+fn is_eunice_thinking(line: &str) -> bool {
+    let trimmed = line.trim();
+    trimmed.len() > 1
+        && trimmed.starts_with(['✻', '✶', '✺', '✹', '✷'])
+        && trimmed[trimmed.chars().next().map_or(0, char::len_utf8)..].trim() == "Thinking…"
 }
 
 /// Strip terminal control sequences while preserving every displayed byte.
@@ -543,10 +603,19 @@ fn parse_working(pane: &str) -> Option<(String, String)> {
     )
     .ok()?;
     // Only the tail: the same line from an earlier turn is still in scrollback,
-    // and matching it would pin every window on permanently.
-    let lines: Vec<&str> = pane.lines().collect();
+    // and matching it would pin every window on permanently. Blank rows do not
+    // count towards it: tmux prints every row of the pane, so a status line
+    // drawn near the top of a tall window sits above dozens of empty ones.
+    let lines: Vec<&str> = pane.lines().filter(|line| !line.trim().is_empty()).collect();
     let start = lines.len().saturating_sub(30);
-    for line in lines[start..].iter().rev() {
+    let tail = &lines[start..];
+    if let Some(found) = parse_agy_working(tail) {
+        return Some(found);
+    }
+    if let Some(found) = parse_eunice_working(pane, tail) {
+        return Some(found);
+    }
+    for line in tail.iter().rev() {
         if let Some(caps) = claude_re.captures(line) {
             return Some((
                 caps[1].trim().to_string(),
@@ -572,6 +641,38 @@ fn parse_working(pane: &str) -> Option<(String, String)> {
         }
     }
     None
+}
+
+/// AGY has no live timer. Its status footer is redrawn in place, so the hint it
+/// shows right now is the truth: `esc to cancel` means a turn is running,
+/// `? for shortcuts` means idle even if a spinner line lingers above. Background
+/// tasks listed in the footer are not the agent working.
+fn parse_agy_working(tail: &[&str]) -> Option<(String, String)> {
+    let hint = tail.iter().rev().find_map(|line| agy_footer(line))?;
+    if hint != "esc to cancel" {
+        return None;
+    }
+    let verb = tail
+        .iter()
+        .rev()
+        .find_map(|line| agy_spinner_verb(line))
+        .unwrap_or_else(|| "Working".to_string());
+    Some((verb, String::new()))
+}
+
+/// EUNICE hides its composer while a turn runs and draws it again when done, so
+/// a `Thinking…` line with no composer footer below it means still working.
+/// Something on screen must identify EUNICE first: other agents print a similar
+/// glyph, and a bare `Thinking…` in their transcript would otherwise stick.
+fn parse_eunice_working(pane: &str, tail: &[&str]) -> Option<(String, String)> {
+    if !pane.lines().any(is_eunice_marker) {
+        return None;
+    }
+    let thinking = tail.iter().rposition(|line| is_eunice_thinking(line))?;
+    if tail[thinking + 1..].iter().any(|line| is_eunice_footer(line)) {
+        return None;
+    }
+    Some(("Thinking".to_string(), String::new()))
 }
 
 /// Per-window liveness: which windows are waiting on a prompt, and which are
@@ -899,14 +1000,100 @@ fn validate_window_name(name: &str) -> Result<(), String> {
     Ok(())
 }
 
-const DEFAULT_NEW_WINDOW_COMMAND: &str = "codex --yolo";
+/// The coding agents a new window can start. Every one launches with approvals
+/// bypassed so the window never sits waiting on a permission prompt:
+/// `claude`/`agy` take `--dangerously-skip-permissions`, `codex` takes its
+/// `--yolo` alias, and `eunice` has no approval prompts at all, so it runs bare.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+enum Agent {
+    Claude,
+    #[default]
+    Codex,
+    Agy,
+    Eunice,
+}
 
-/// Give Codex the project instructions Claude already uses without duplicating
-/// them. `symlink_metadata` deliberately does not follow the destination: a
-/// broken AGENTS.md symlink is still an existing entry and must not be replaced.
-fn ensure_agents_link(project_dir: &std::path::Path) -> Result<bool, String> {
+impl Agent {
+    fn parse(raw: &str) -> Option<Agent> {
+        match raw.trim().to_ascii_lowercase().as_str() {
+            "claude" => Some(Agent::Claude),
+            "codex" => Some(Agent::Codex),
+            "agy" => Some(Agent::Agy),
+            "eunice" => Some(Agent::Eunice),
+            _ => None,
+        }
+    }
+
+    /// The lowercase name clients send and receive.
+    fn name(self) -> &'static str {
+        match self {
+            Agent::Claude => "claude",
+            Agent::Codex => "codex",
+            Agent::Agy => "agy",
+            Agent::Eunice => "eunice",
+        }
+    }
+
+    fn command(self) -> &'static str {
+        match self {
+            Agent::Claude => "claude --dangerously-skip-permissions",
+            Agent::Codex => "codex --yolo",
+            Agent::Agy => "agy --dangerously-skip-permissions",
+            Agent::Eunice => "eunice",
+        }
+    }
+}
+
+/// An absent or blank `agent` field keeps the historical default, so older
+/// clients (the mobile app) keep getting Codex windows.
+fn requested_agent(raw: Option<&str>) -> Result<Agent, String> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(Agent::default()),
+        Some(name) => Agent::parse(name).ok_or_else(|| format!("unknown agent: {}", name)),
+    }
+}
+
+/// New windows go to session `0` unless the client says otherwise. The attached
+/// `MASTER` session holds the backend control processes, and tmux would put an
+/// untargeted `new-window` there simply because it is the attached one.
+const DEFAULT_SESSION: &str = "0";
+
+fn requested_session(raw: Option<&str>) -> Result<String, String> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(DEFAULT_SESSION.to_string()),
+        Some(name) => validate_window_name(name)
+            .map(|()| name.to_string())
+            .map_err(|e| format!("invalid session: {}", e)),
+    }
+}
+
+/// `session:` with no window part makes tmux append at the next free index.
+fn session_target(session: &str) -> String {
+    format!("{}:", session)
+}
+
+/// Instruction files the other agents read. Each becomes a symlink to the
+/// project's CLAUDE.md so the rules live in exactly one place.
+const INSTRUCTION_LINKS: [&str; 2] = ["AGENTS.md", "GEMINI.md"];
+
+/// Guarantee every agent's instruction file exists when CLAUDE.md does, without
+/// ever touching a file or symlink that is already there. Returns the names
+/// created this time.
+fn ensure_instruction_links(project_dir: &std::path::Path) -> Result<Vec<&'static str>, String> {
+    let mut created = Vec::new();
+    for name in INSTRUCTION_LINKS {
+        if ensure_link(project_dir, name)? {
+            created.push(name);
+        }
+    }
+    Ok(created)
+}
+
+/// `symlink_metadata` deliberately does not follow the destination: a broken
+/// symlink is still an existing entry and must not be replaced.
+fn ensure_link(project_dir: &std::path::Path, name: &str) -> Result<bool, String> {
     let claude = project_dir.join("CLAUDE.md");
-    let agents = project_dir.join("AGENTS.md");
+    let agents = project_dir.join(name);
 
     match std::fs::metadata(&claude) {
         Ok(_) => {}
@@ -948,19 +1135,121 @@ fn read_pane_cwd(target: &str) -> Result<std::path::PathBuf, String> {
     Ok(std::path::PathBuf::from(path))
 }
 
-/// Start the default agent in a freshly-created interactive shell. Keep the
+/// Start the chosen agent in a freshly-created interactive shell. Keep the
 /// literal payload and Enter in separate tmux calls: with `-l`, putting Enter
 /// in the same argv would type the word rather than press the key.
-fn launch_default_agent(target: &str) -> Result<(), String> {
-    send_keys_literal(target, DEFAULT_NEW_WINDOW_COMMAND)?;
+fn launch_agent(target: &str, agent: Agent) -> Result<(), String> {
+    send_keys_literal(target, agent.command())?;
     send_keys(target, &["Enter".to_string()])
 }
 
-async fn new_window() -> impl IntoResponse {
-    // Create a new tmux window and start the same default agent as the named
-    // project flow.
+/// Claude, Codex and AGY each ask "do you trust this folder?" the first time
+/// they start in a directory, and nothing happens until someone answers. The
+/// pane shows the option rows with the terminal's own cursor glyph on the
+/// highlighted one; the answer is the key presses that move that cursor onto
+/// the yes row and confirm. Fails closed: any other question returns `None`.
+fn trust_prompt_answer(pane: &str) -> Option<Vec<&'static str>> {
+    const YES: [&str; 2] = ["Yes, I trust this folder", "Yes, continue"];
+    const NO: [&str; 2] = ["No, exit", "No, quit"];
+    // Blank rows are skipped for the same reason as in `parse_working`: the
+    // dialog is drawn at the top of a fresh window, above a screen of them.
+    let lines: Vec<&str> = pane.lines().filter(|line| !line.trim().is_empty()).collect();
+    let start = lines.len().saturating_sub(25);
+    let tail = &lines[start..];
+    let asks = tail.iter().any(|line| {
+        line.contains("Do you trust the contents of this") || line.contains("Quick safety check:")
+    });
+    if !asks {
+        return None;
+    }
+    let yes = tail.iter().rposition(|line| is_trust_option(line, &YES))?;
+    let no = tail.iter().rposition(|line| is_trust_option(line, &NO))?;
+    let has_cursor = |index: usize| tail[index].trim_start().starts_with(['❯', '›', '>']);
+    if has_cursor(yes) {
+        Some(vec!["Enter"])
+    } else if has_cursor(no) {
+        Some(vec![if yes > no { "Down" } else { "Up" }, "Enter"])
+    } else {
+        None
+    }
+}
+
+fn is_trust_option(line: &str, labels: &[&str]) -> bool {
+    let text = line.trim().trim_start_matches(['❯', '›', '>']).trim_start();
+    // Codex numbers its rows ("1. Yes, continue"); Claude and AGY do not.
+    let text = text
+        .strip_prefix(|c: char| c.is_ascii_digit())
+        .and_then(|rest| rest.strip_prefix(". "))
+        .unwrap_or(text);
+    labels.iter().any(|label| text.starts_with(label))
+}
+
+/// Watch a just-launched window briefly and answer its trust prompt if one
+/// appears. The window was created for one of the user's own projects, so yes
+/// is always the right answer. Gives up quietly once the window is gone or
+/// the agent has started without asking.
+///
+/// One key per tick, re-read the screen, repeat. Claude Code drops arrow keys
+/// that arrive while it is still probing the terminal, and Enter on its
+/// default "No, exit" row quits the agent — so Enter is only ever sent after a
+/// fresh capture shows the cursor already on the yes row.
+fn auto_accept_trust_prompt(target: String) {
+    tokio::spawn(async move {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
+        while std::time::Instant::now() < deadline {
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+            let Some(pane) = capture_visible(&target) else {
+                return;
+            };
+            let Some(keys) = trust_prompt_answer(&pane) else {
+                continue;
+            };
+            let key = keys[0];
+            if send_keys(&target, &[key.to_string()]).is_err() {
+                return;
+            }
+            if key == "Enter" {
+                return;
+            }
+        }
+    });
+}
+
+#[derive(Deserialize, Default)]
+struct NewWindowRequest {
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    session: Option<String>,
+}
+
+/// The body is optional: the mobile app posts with no body and expects the
+/// default agent in the default session.
+async fn new_window(body: Option<Json<NewWindowRequest>>) -> impl IntoResponse {
+    let payload = body.map(|Json(p)| p).unwrap_or_default();
+    let agent = match requested_agent(payload.agent.as_deref()) {
+        Ok(agent) => agent,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"success": false, "error": error})),
+            );
+        }
+    };
+    let session = match requested_session(payload.session.as_deref()) {
+        Ok(session) => session,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"success": false, "error": error})),
+            );
+        }
+    };
     let result = Command::new("tmux")
-        .args(["new-window", "-P", "-F", "#{session_name}:#{window_index}"])
+        .args([
+            "new-window", "-t", &session_target(&session), "-P", "-F",
+            "#{session_name}:#{window_index}",
+        ])
         .output();
 
     match result {
@@ -980,7 +1269,7 @@ async fn new_window() -> impl IntoResponse {
                         );
                     }
                 };
-                if let Err(error) = ensure_agents_link(&project_dir) {
+                if let Err(error) = ensure_instruction_links(&project_dir) {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({
@@ -990,7 +1279,7 @@ async fn new_window() -> impl IntoResponse {
                         })),
                     );
                 }
-                if let Err(error) = launch_default_agent(&target) {
+                if let Err(error) = launch_agent(&target, agent) {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({
@@ -1000,11 +1289,14 @@ async fn new_window() -> impl IntoResponse {
                         })),
                     );
                 }
+                auto_accept_trust_prompt(target.clone());
                 (
                     StatusCode::OK,
                     Json(serde_json::json!({
                         "success": true,
-                        "target": target
+                        "target": target,
+                        "agent": agent.name(),
+                        "session": session,
                     })),
                 )
             } else {
@@ -1031,6 +1323,10 @@ async fn new_window() -> impl IntoResponse {
 #[derive(Deserialize)]
 struct NewWindowNamedRequest {
     name: String,
+    #[serde(default)]
+    agent: Option<String>,
+    #[serde(default)]
+    session: Option<String>,
 }
 
 async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl IntoResponse {
@@ -1042,6 +1338,24 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
             Json(serde_json::json!({"success": false, "error": e})),
         );
     }
+    let agent = match requested_agent(payload.agent.as_deref()) {
+        Ok(agent) => agent,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"success": false, "error": error})),
+            );
+        }
+    };
+    let session = match requested_session(payload.session.as_deref()) {
+        Ok(session) => session,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"success": false, "error": error})),
+            );
+        }
+    };
 
     // 1. Existing window with this exact name? Read-only — no select-window probe
     //    (that would switch the user's active window as a side effect).
@@ -1079,11 +1393,12 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
         );
     }
 
-    // 3. Create the window IN that dir. -n makes the name permanent; -P -F returns
-    //    the stable window_id (targeting by name would hit the oldest duplicate).
+    // 3. Create the window IN that dir, in the requested session. -n makes the
+    //    name permanent; -P -F returns the stable window_id (targeting by name
+    //    would hit the oldest duplicate).
     let create = Command::new("tmux")
         .args([
-            "new-window", "-c", &dir, "-n", &name, "-P", "-F",
+            "new-window", "-t", &session_target(&session), "-c", &dir, "-n", &name, "-P", "-F",
             "#{window_id}\t#{session_name}:#{window_index}",
         ])
         .output();
@@ -1114,9 +1429,8 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
         }
     };
 
-    // 4. Verify the pane actually started in <dir> BEFORE launching Codex in
-    //    YOLO mode
-    //    (which skips permission prompts). Never fire it in an unintended dir.
+    // 4. Verify the pane actually started in <dir> BEFORE launching an agent
+    //    with approvals bypassed. Never fire it in an unintended dir.
     let expected = std::fs::canonicalize(&dir).unwrap_or_else(|_| std::path::PathBuf::from(&dir));
     let actual = Command::new("tmux")
         .args(["display-message", "-p", "-t", &window_id, "#{pane_current_path}"])
@@ -1138,9 +1452,9 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
         );
     }
 
-    // 5. Reuse Claude's project instructions when Codex does not already have
-    //    its own AGENTS.md. Never replace an existing file or symlink.
-    if let Err(error) = ensure_agents_link(&expected) {
+    // 5. Point the other agents' instruction files at CLAUDE.md when they do
+    //    not already exist. Never replace an existing file or symlink.
+    if let Err(error) = ensure_instruction_links(&expected) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
@@ -1152,8 +1466,9 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
         );
     }
 
-    // 6. Launch the default agent only after the instruction link is ready.
-    if let Err(error) = launch_default_agent(&window_id) {
+    // 6. Launch the chosen agent only after the instruction links are ready,
+    //    then answer its first-launch trust prompt if it shows one.
+    if let Err(error) = launch_agent(&window_id, agent) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
@@ -1164,12 +1479,14 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
             })),
         );
     }
+    auto_accept_trust_prompt(window_id.clone());
 
     (
         StatusCode::OK,
         Json(serde_json::json!({
             "success": true, "existing": false,
             "window_id": window_id, "target": target,
+            "agent": agent.name(), "session": session,
         })),
     )
 }
@@ -2059,17 +2376,17 @@ fn trigger_bugfix_window() {
         .unwrap_or(false);
 
     if !check {
-        // Create the internal bug-fix window with the same default agent used
-        // by the interactive new-window flow.
+        // Create the internal bug-fix window with the same default agent and
+        // session used by the interactive new-window flow.
         let _ = Command::new("tmux")
-            .args(["new-window", "-n", window_name])
+            .args(["new-window", "-t", &session_target(DEFAULT_SESSION), "-n", window_name])
             .output();
         let project_dir = "/media/xeb/GreyArea/projects/tmux-terminal";
-        if let Err(error) = ensure_agents_link(std::path::Path::new(project_dir)) {
-            eprintln!("Could not prepare Codex instructions: {}", error);
+        if let Err(error) = ensure_instruction_links(std::path::Path::new(project_dir)) {
+            eprintln!("Could not prepare agent instruction links: {}", error);
             return;
         }
-        let start_cmd = format!("cd {} && {}", project_dir, DEFAULT_NEW_WINDOW_COMMAND);
+        let start_cmd = format!("cd {} && {}", project_dir, Agent::default().command());
         let _ = Command::new("tmux")
             .args(["send-keys", "-t", window_name, &start_cmd, "Enter"])
             .output();
@@ -2346,34 +2663,101 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_project_dirs, detect_agent, ensure_agents_link, parse_working, strip_ansi,
-        validate_kill_target, validate_window_name, AgentKind, DEFAULT_NEW_WINDOW_COMMAND,
+        collect_project_dirs, detect_agent, ensure_instruction_links, parse_working,
+        requested_agent, requested_session, strip_ansi, trust_prompt_answer,
+        validate_kill_target, validate_window_name, Agent, AgentKind,
     };
 
     #[test]
-    fn new_windows_default_to_codex_yolo() {
-        assert_eq!(DEFAULT_NEW_WINDOW_COMMAND, "codex --yolo");
+    fn a_missing_or_blank_agent_field_means_codex() {
+        assert_eq!(requested_agent(None).unwrap(), Agent::Codex);
+        assert_eq!(requested_agent(Some("  ")).unwrap(), Agent::Codex);
+        assert_eq!(requested_agent(Some("Claude")).unwrap(), Agent::Claude);
+        assert!(requested_agent(Some("vim")).is_err());
+    }
+
+    // --- agent selection ---
+
+    #[test]
+    fn new_windows_default_to_codex() {
+        assert_eq!(Agent::default(), Agent::Codex);
+        assert_eq!(Agent::default().command(), "codex --yolo");
     }
 
     #[test]
-    fn creates_agents_link_to_existing_claude_instructions() {
+    fn every_agent_launches_in_yolo_mode() {
+        assert_eq!(Agent::Claude.command(), "claude --dangerously-skip-permissions");
+        assert_eq!(Agent::Codex.command(), "codex --yolo");
+        assert_eq!(Agent::Agy.command(), "agy --dangerously-skip-permissions");
+        // EUNICE has no approval prompts, so there is nothing to bypass.
+        assert_eq!(Agent::Eunice.command(), "eunice");
+    }
+
+    #[test]
+    fn parses_agent_names_case_insensitively() {
+        assert_eq!(Agent::parse("claude"), Some(Agent::Claude));
+        assert_eq!(Agent::parse("Codex"), Some(Agent::Codex));
+        assert_eq!(Agent::parse("AGY"), Some(Agent::Agy));
+        assert_eq!(Agent::parse(" eunice "), Some(Agent::Eunice));
+        assert_eq!(Agent::parse("vim"), None);
+        assert_eq!(Agent::parse(""), None);
+    }
+
+    #[test]
+    fn agent_names_round_trip_for_the_client() {
+        for agent in [Agent::Claude, Agent::Codex, Agent::Agy, Agent::Eunice] {
+            assert_eq!(Agent::parse(agent.name()), Some(agent));
+        }
+    }
+
+    // --- session selection ---
+
+    #[test]
+    fn new_windows_default_to_session_zero() {
+        assert_eq!(requested_session(None).unwrap(), "0");
+        assert_eq!(requested_session(Some("")).unwrap(), "0");
+        assert_eq!(requested_session(Some("  ")).unwrap(), "0");
+    }
+
+    #[test]
+    fn accepts_a_named_session() {
+        assert_eq!(requested_session(Some("MASTER")).unwrap(), "MASTER");
+        assert_eq!(requested_session(Some(" 0 ")).unwrap(), "0");
+    }
+
+    #[test]
+    fn rejects_session_names_tmux_would_misparse() {
+        for s in ["a:b", "foo bar", "-x", "a/c", "$(id)"] {
+            assert!(requested_session(Some(s)).is_err(), "should reject {s:?}");
+        }
+    }
+
+    // --- instruction links ---
+
+    #[test]
+    fn creates_agents_and_gemini_links_to_existing_claude_instructions() {
         let project = tempfile::tempdir().unwrap();
         std::fs::write(project.path().join("CLAUDE.md"), "project rules\n").unwrap();
 
-        assert!(ensure_agents_link(project.path()).unwrap());
-        let agents = project.path().join("AGENTS.md");
-        assert_eq!(
-            std::fs::read_link(&agents).unwrap(),
-            std::path::PathBuf::from("./CLAUDE.md")
-        );
-        assert_eq!(std::fs::read_to_string(agents).unwrap(), "project rules\n");
+        let created = ensure_instruction_links(project.path()).unwrap();
+        assert_eq!(created, vec!["AGENTS.md", "GEMINI.md"]);
+        for name in ["AGENTS.md", "GEMINI.md"] {
+            let link = project.path().join(name);
+            assert_eq!(
+                std::fs::read_link(&link).unwrap(),
+                std::path::PathBuf::from("./CLAUDE.md"),
+                "{name} should point at CLAUDE.md"
+            );
+            assert_eq!(std::fs::read_to_string(link).unwrap(), "project rules\n");
+        }
     }
 
     #[test]
-    fn does_not_create_agents_without_claude_instructions() {
+    fn does_not_create_links_without_claude_instructions() {
         let project = tempfile::tempdir().unwrap();
-        assert!(!ensure_agents_link(project.path()).unwrap());
+        assert!(ensure_instruction_links(project.path()).unwrap().is_empty());
         assert!(std::fs::symlink_metadata(project.path().join("AGENTS.md")).is_err());
+        assert!(std::fs::symlink_metadata(project.path().join("GEMINI.md")).is_err());
     }
 
     #[test]
@@ -2382,7 +2766,8 @@ mod tests {
         std::fs::write(project.path().join("CLAUDE.md"), "claude rules\n").unwrap();
         std::fs::write(project.path().join("AGENTS.md"), "codex rules\n").unwrap();
 
-        assert!(!ensure_agents_link(project.path()).unwrap());
+        let created = ensure_instruction_links(project.path()).unwrap();
+        assert_eq!(created, vec!["GEMINI.md"]);
         assert_eq!(
             std::fs::read_to_string(project.path().join("AGENTS.md")).unwrap(),
             "codex rules\n"
@@ -2390,17 +2775,199 @@ mod tests {
     }
 
     #[test]
-    fn never_replaces_a_broken_agents_symlink() {
+    fn never_replaces_a_broken_gemini_symlink() {
         let project = tempfile::tempdir().unwrap();
         std::fs::write(project.path().join("CLAUDE.md"), "claude rules\n").unwrap();
-        let agents = project.path().join("AGENTS.md");
-        std::os::unix::fs::symlink("./missing.md", &agents).unwrap();
+        let gemini = project.path().join("GEMINI.md");
+        std::os::unix::fs::symlink("./missing.md", &gemini).unwrap();
 
-        assert!(!ensure_agents_link(project.path()).unwrap());
+        let created = ensure_instruction_links(project.path()).unwrap();
+        assert_eq!(created, vec!["AGENTS.md"]);
         assert_eq!(
-            std::fs::read_link(agents).unwrap(),
+            std::fs::read_link(gemini).unwrap(),
             std::path::PathBuf::from("./missing.md")
         );
+    }
+
+    #[test]
+    fn creating_links_twice_is_a_no_op() {
+        let project = tempfile::tempdir().unwrap();
+        std::fs::write(project.path().join("CLAUDE.md"), "claude rules\n").unwrap();
+        assert_eq!(ensure_instruction_links(project.path()).unwrap().len(), 2);
+        assert!(ensure_instruction_links(project.path()).unwrap().is_empty());
+    }
+
+    // --- first-launch trust prompts, captured from real panes ---
+
+    const CLAUDE_TRUST: &str = "\
+ Accessing workspace:
+ /media/xeb/GreyArea/projects/zz-trust-git-claude
+ Quick safety check: Is this a project you created or one you trust? (Like your
+ own code, a well-known open source project, or work from your team). If not,
+ take a moment to review what's in this folder first.
+ Claude Code'll be able to read, edit, and execute files here.
+ Security guide
+ ❯ No, exit
+   Yes, I trust this folder
+ Enter to confirm · Esc to cancel
+";
+
+    const CODEX_TRUST: &str = "\
+> You are in /media/xeb/GreyArea/projects/zz-trust-plain-codex
+  Do you trust the contents of this directory? Working with untrusted contents
+  comes with higher risk of prompt injection. Trusting the directory allows
+  project-local config, hooks, and exec policies to load.
+› 1. Yes, continue
+  2. No, quit
+  Press enter to continue
+";
+
+    const AGY_TRUST: &str = "\
+Accessing workspace:
+/home/xeb/p/zz-trust-plain-agy
+Do you trust the contents of this project?
+Antigravity CLI requires permission to read, edit, and execute files here.
+> Yes, I trust this folder
+  No, exit
+  ↑/↓ Navigate · enter Confirm
+                                                          Gemini 3.8 Flash · high
+";
+
+    #[test]
+    fn accepts_claude_trust_prompt_by_moving_off_the_default_no() {
+        assert_eq!(trust_prompt_answer(CLAUDE_TRUST), Some(vec!["Down", "Enter"]));
+    }
+
+    #[test]
+    fn accepts_codex_trust_prompt_with_enter() {
+        assert_eq!(trust_prompt_answer(CODEX_TRUST), Some(vec!["Enter"]));
+    }
+
+    #[test]
+    fn accepts_agy_trust_prompt_with_enter() {
+        assert_eq!(trust_prompt_answer(AGY_TRUST), Some(vec!["Enter"]));
+    }
+
+    #[test]
+    fn moves_up_when_yes_is_above_the_cursor() {
+        let pane = "Do you trust the contents of this project?\n  Yes, I trust this folder\n> No, exit\n";
+        assert_eq!(trust_prompt_answer(pane), Some(vec!["Up", "Enter"]));
+    }
+
+    #[test]
+    fn leaves_other_questions_alone() {
+        let picker = "──────────────────────\n ☐ Allowlist\n\nWhich addresses should I add?\n\n❯ 1. Both real ones\n  2. Neither\n\nEnter to select · ↑/↓ to navigate · Esc to cancel\n";
+        assert!(trust_prompt_answer(picker).is_none());
+        assert!(trust_prompt_answer("$ ls\nsrc\n$ ").is_none());
+        // The words alone, without a highlighted yes/no pair, are transcript text.
+        assert!(trust_prompt_answer("I trust this folder is fine.\n❯ \n").is_none());
+    }
+
+    // tmux prints every row of the pane, and a dialog drawn at the top of a
+    // tall window is followed by dozens of empty rows.
+    #[test]
+    fn sees_a_trust_prompt_above_a_screenful_of_blank_rows() {
+        let pane = format!("{}{}", CLAUDE_TRUST, "\n".repeat(50));
+        assert_eq!(trust_prompt_answer(&pane), Some(vec!["Down", "Enter"]));
+    }
+
+    #[test]
+    fn sees_eunice_thinking_above_a_screenful_of_blank_rows() {
+        let pane = format!(
+            "  /help for commands · /quit or Ctrl+D to exit\n hello\n  ✻ Thinking…\n{}",
+            "\n".repeat(50)
+        );
+        assert_eq!(parse_working(&pane), Some(("Thinking".to_string(), String::new())));
+    }
+
+    #[test]
+    fn ignores_a_trust_prompt_that_scrolled_into_history() {
+        let mut pane = String::from(CODEX_TRUST);
+        for i in 0..40 {
+            pane.push_str(&format!("line {i}\n"));
+        }
+        pane.push_str("› Ask Codex to do anything\n");
+        assert!(trust_prompt_answer(&pane).is_none());
+    }
+
+    // --- AGY and EUNICE working status, captured from real panes ---
+
+    #[test]
+    fn reads_agy_generating_status() {
+        let pane = "> Run the shell command\n⣟  Generating...\n└ Tip: Use /feedback to share your experience with the team.\n────\n>\n────\nesc to cancel                                             Gemini 3.8 Flash · high\n";
+        assert_eq!(parse_working(pane), Some(("Generating".to_string(), String::new())));
+    }
+
+    #[test]
+    fn reads_agy_tool_status_with_a_background_task() {
+        let pane = "○ Bash(sleep 25 && echo done) (ctrl+o to expand)\n⣟  Running command...\n────\n>\n────\n  ● [08:57:07] sleep 25 && echo done running\n────\nesc to cancel                        Gemini 3.8 Flash · high · 1 task(s) · /tasks\n";
+        assert_eq!(parse_working(pane), Some(("Running command".to_string(), String::new())));
+    }
+
+    #[test]
+    fn agy_waiting_on_a_background_task_is_idle() {
+        let pane = "○ Bash(sleep 25 && echo done) (ctrl+o to expand)\n  I have launched the command.\n────\n>\n────\n  ● [08:57:07] sleep 25 && echo done running\n────\n? for shortcuts                      Gemini 3.8 Flash · high · 1 task(s) · /tasks\n";
+        assert!(parse_working(pane).is_none());
+    }
+
+    #[test]
+    fn agy_spinner_left_in_scrollback_is_idle() {
+        let pane = "⣟  Generating...\n  done\n────\n>\n────\n? for shortcuts                                           Gemini 3.8 Flash · high\n";
+        assert!(parse_working(pane).is_none());
+    }
+
+    #[test]
+    fn agy_cancel_footer_without_a_spinner_line_is_still_working() {
+        let pane = "> hi\n────\n>\n────\nesc to cancel                                             Gemini 3.8 Flash · high\n";
+        assert_eq!(parse_working(pane), Some(("Working".to_string(), String::new())));
+    }
+
+    #[test]
+    fn reads_eunice_thinking() {
+        let pane = "  model: gemini-3.8-flash  ·  tools: 4\n  /help for commands · /quit or Ctrl+D to exit\n Reply with the single word hi and nothing else.\n  ✻ Thinking…\n";
+        assert_eq!(parse_working(pane), Some(("Thinking".to_string(), String::new())));
+    }
+
+    #[test]
+    fn eunice_tool_call_after_thinking_is_still_working() {
+        let pane = "  /help for commands · /quit or Ctrl+D to exit\n Run ls\n  ✻ Thinking…\n  → bash\n    {\"command\": \"ls\"}\n";
+        assert_eq!(parse_working(pane), Some(("Thinking".to_string(), String::new())));
+    }
+
+    #[test]
+    fn eunice_is_idle_once_its_composer_is_back() {
+        let pane = " Reply with the single word hi and nothing else.\n  ✻ Thinking…\nhi\n───────────────────────── eunice\n›\n─────────────────────────\n▸▸ ↵ send · esc clear · /help · ctrl+d exit\n";
+        assert!(parse_working(pane).is_none());
+    }
+
+    #[test]
+    fn a_bare_thinking_line_outside_eunice_is_not_working() {
+        // Nothing on screen says EUNICE, so the line is not its spinner.
+        assert!(parse_working("some transcript\n  ✻ Thinking…\n").is_none());
+    }
+
+    // --- agent badge ---
+
+    #[test]
+    fn detects_agy_from_its_status_footer() {
+        let idle = "> \n─────\n? for shortcuts                                           Gemini 3.8 Flash · high\n";
+        assert_eq!(detect_agent(idle), Some(AgentKind::Agy));
+        let busy = "⣟  Generating...\n>\nesc to cancel                        Gemini 3.8 Flash · high · 1 task(s) · /tasks\n";
+        assert_eq!(detect_agent(busy), Some(AgentKind::Agy));
+    }
+
+    #[test]
+    fn claude_shortcut_hint_is_not_agy() {
+        // Claude Code prints the same hint, but without a model · effort tail.
+        assert_eq!(detect_agent("❯ \n─────\n  ? for shortcuts\n"), None);
+    }
+
+    #[test]
+    fn detects_eunice_from_its_composer_or_banner() {
+        let idle = "hi\n──────────────── eunice\n›\n────────────────\n▸▸ ↵ send · esc clear · /help · ctrl+d exit\n";
+        assert_eq!(detect_agent(idle), Some(AgentKind::Eunice));
+        let busy = "  model: gemini-3.8-flash  ·  tools: 4\n  /help for commands · /quit or Ctrl+D to exit\n hello\n  ✻ Thinking…\n";
+        assert_eq!(detect_agent(busy), Some(AgentKind::Eunice));
     }
 
     #[test]

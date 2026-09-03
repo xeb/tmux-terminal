@@ -766,6 +766,43 @@
             position: relative;
         }
 
+        /* Agent and session pickers. Segmented buttons instead of dropdowns:
+           one tap on a phone, one Tab on a keyboard, and the whole set is
+           visible so nothing hides behind a closed select. */
+        .nw-pick {
+            display: flex;
+            flex-wrap: wrap;
+            align-items: center;
+            gap: 0.4rem;
+            padding: 0.6rem 1rem 0;
+        }
+
+        .nw-pick-label {
+            min-width: 3.4rem;
+            font-size: 0.6rem;
+            letter-spacing: 0.08em;
+            color: var(--matrix-dim);
+        }
+
+        .nw-pick-btn.selected,
+        .nw-pick-btn.selected:hover {
+            background: var(--matrix-green);
+            color: var(--void);
+            border-color: var(--matrix-green);
+        }
+
+        /* The exact command the server will type into the new window, so the
+           flag behind each button is never a surprise. */
+        .nw-cmd {
+            padding: 0.5rem 1rem 0.6rem;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.65rem;
+            color: var(--matrix-dim);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
         .nw-suggest {
             position: absolute;
             top: 100%;
@@ -1672,9 +1709,12 @@
 
     <div class="modal-overlay" id="newWindowModal">
         <div class="rename-modal new-window-modal">
-            <div class="modal-header">New Codex Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B c</span></div>
+            <div class="modal-header">New Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B c</span></div>
+            <div class="nw-pick" id="nwAgentPick" role="radiogroup" aria-label="Agent"></div>
+            <div class="nw-pick" id="nwSessionPick" role="radiogroup" aria-label="tmux session"></div>
+            <div class="nw-cmd" id="nwCommand" aria-live="polite"></div>
             <input type="text" class="rename-input" id="newWindowInput" placeholder="Project name (a-z, 0-9, . _ -)" autocomplete="off" spellcheck="false">
-            <div class="rename-hint">Enter to create • Esc to cancel</div>
+            <div class="rename-hint">Enter to create • Tab agent • ⇧Tab session • Esc to cancel</div>
             <div class="nw-suggest" id="nwSuggest"></div>
         </div>
     </div>
@@ -2108,6 +2148,63 @@
         const CLAUDE_WORKING_LINE = /(?:^|\s)([A-Za-z][A-Za-z ]{0,20})…\s*\(([^)]*\b\d+s\b[^)]*)\)/;
         const CODEX_WORKING_LINE = /^\s*(?:•\s*)?Working\s+\(([^)]*\b\d+s\b[^)]*)\)(?:\s*·\s*(.*))?\s*$/;
 
+        /* AGY (the Antigravity CLI) has no live timer. Its status footer is
+           redrawn in place, so the hint it shows right now is the truth:
+
+               ⣟  Generating...
+               esc to cancel                      Gemini 3.8 Flash · high · 1 task(s) · /tasks
+
+           "esc to cancel" means a turn is running; "? for shortcuts" means idle
+           even if a spinner line lingers above. Claude Code prints the same
+           shortcuts hint, so the "model · effort" tail is what makes it AGY.
+           Background tasks in the footer are not the agent working. */
+        const AGY_FOOTER = /^\s*(\? for shortcuts|esc to cancel)\s{2,}\S.*·\s*(?:high|medium|low)\b/;
+        const AGY_SPINNER = /^\s*[\u2800-\u28FF]\s+(\S.*?)\.\.\.\s*$/;
+
+        /* EUNICE prints "✻ Thinking…" once when a turn starts and never redraws
+           it; its composer footer comes back only when the turn is done. So the
+           rule is: a Thinking line with no footer below it, on a screen that
+           something else already identifies as EUNICE. */
+        const EUNICE_THINKING = /^\s*[✻✶✺✹✷]\s*Thinking…\s*$/;
+        const EUNICE_TOOL = /^\s*→ [A-Za-z_][\w-]*\s*$/;
+
+        function isEuniceFooter(line) {
+            return line.includes('↵ send') && line.includes('esc clear');
+        }
+
+        function isEuniceMarker(line) {
+            const t = line.trim();
+            return isEuniceFooter(line)
+                || line.includes('/quit or Ctrl+D to exit')
+                || (t.startsWith('─') && t.endsWith(' eunice'))
+                || EUNICE_TOOL.test(line);
+        }
+
+        function parseAgyWorking(tail) {
+            for (let i = tail.length - 1; i >= 0; i--) {
+                const footer = tail[i].match(AGY_FOOTER);
+                if (!footer) continue;
+                if (footer[1] !== 'esc to cancel') return null;
+                for (let j = tail.length - 1; j >= 0; j--) {
+                    const spin = tail[j].match(AGY_SPINNER);
+                    if (spin) return { verb: spin[1].trim(), meta: '' };
+                }
+                return { verb: 'Working', meta: '' };
+            }
+            return null;
+        }
+
+        function parseEuniceWorking(lines, tail) {
+            if (!lines.some(isEuniceMarker)) return null;
+            let thinking = -1;
+            for (let i = tail.length - 1; i >= 0; i--) {
+                if (EUNICE_THINKING.test(tail[i])) { thinking = i; break; }
+            }
+            if (thinking < 0) return null;
+            if (tail.slice(thinking + 1).some(isEuniceFooter)) return null;
+            return { verb: 'Thinking', meta: '' };
+        }
+
         function parseCodexWorking(line) {
             const match = line.match(CODEX_WORKING_LINE);
             if (!match) return null;
@@ -2122,13 +2219,21 @@
 
         function parseWorking(content) {
             if (!content) return null;
-            const lines = content.split('\n');
+            // Blank rows do not count: tmux prints every row of the pane, so a
+            // status line near the top of a tall window sits above dozens of
+            // empty ones.
+            const lines = content.split('\n').filter(line => line.trim() !== '');
             // Only the tail: the same line from an earlier turn is still in
             // scrollback, and matching it would pin the bar on permanently.
-            for (let i = lines.length - 1; i >= Math.max(0, lines.length - 30); i--) {
-                const codex = parseCodexWorking(lines[i]);
+            const tail = lines.slice(Math.max(0, lines.length - 30));
+            const agy = parseAgyWorking(tail);
+            if (agy) return agy;
+            const eunice = parseEuniceWorking(lines, tail);
+            if (eunice) return eunice;
+            for (let i = tail.length - 1; i >= 0; i--) {
+                const codex = parseCodexWorking(tail[i]);
                 if (codex) return codex;
-                const match = lines[i].match(CLAUDE_WORKING_LINE);
+                const match = tail[i].match(CLAUDE_WORKING_LINE);
                 if (match) return { verb: match[1].trim(), meta: match[2].trim() };
             }
             return null;
@@ -2145,8 +2250,14 @@
             workingBar.hidden = false;
         }
 
+        const AGENT_BADGES = { codex: 'CODEX', agy: 'AGY', eunice: 'EUNICE' };
         function updateAgentIndicator(agent) {
-            agentIndicator.hidden = agent !== 'codex';
+            const label = AGENT_BADGES[agent];
+            agentIndicator.hidden = !label;
+            if (label) {
+                agentIndicator.textContent = label;
+                agentIndicator.title = `This window is running ${label}`;
+            }
         }
 
         async function captureOutput() {
@@ -3405,6 +3516,11 @@
                 if (e.key === 'Escape') { e.preventDefault(); closeNewWindowModal(); return true; }
                 if (e.key === 'ArrowDown') { e.preventDefault(); moveNwActive(1); return true; }
                 if (e.key === 'ArrowUp') { e.preventDefault(); moveNwActive(-1); return true; }
+                if (e.key === 'Tab') {
+                    e.preventDefault();
+                    if (e.shiftKey) cycleNwSession(1); else cycleNwAgent(1);
+                    return true;
+                }
                 if (e.key === 'Enter') {
                     e.preventDefault();
                     // Whatever is in the input wins — arrowing onto a suggestion
@@ -3542,10 +3658,96 @@
             return false;
         }
 
+        // --- New-window agent + session pickers ------------------------------
+        // The command per agent is decided server-side (Agent::command in
+        // main.rs); this table is the preview shown under the buttons, so the
+        // user sees the real flag before pressing Enter. Keep the two in step.
+        const NW_AGENTS = [
+            { id: 'claude', label: 'CLAUDE', command: 'claude --dangerously-skip-permissions' },
+            { id: 'codex',  label: 'CODEX',  command: 'codex --yolo' },
+            { id: 'agy',    label: 'AGY',    command: 'agy --dangerously-skip-permissions' },
+            { id: 'eunice', label: 'EUNICE', command: 'eunice' },
+        ];
+        const NW_AGENT_KEY = 'tmux-new-window-agent';
+        const NW_DEFAULT_SESSION = '0';
+        const nwAgentPick = document.getElementById('nwAgentPick');
+        const nwSessionPick = document.getElementById('nwSessionPick');
+        const nwCommand = document.getElementById('nwCommand');
+        // The agent is remembered; the session is not. MASTER holds the backend
+        // control processes, so it must be a deliberate pick every single time.
+        let nwAgent = NW_AGENTS.some(a => a.id === localStorage.getItem(NW_AGENT_KEY))
+            ? localStorage.getItem(NW_AGENT_KEY) : 'codex';
+        let nwSession = NW_DEFAULT_SESSION;
+
+        // Sessions come from the window list the page already polls: every
+        // tmux session has at least one window, so no extra endpoint is needed.
+        function nwSessions() {
+            const names = [...new Set(allWindows.map(w => w.target.split(':')[0]))];
+            if (names.length === 0) names.push(NW_DEFAULT_SESSION);
+            names.sort((a, b) => (b === NW_DEFAULT_SESSION) - (a === NW_DEFAULT_SESSION));
+            return names;
+        }
+
+        function nwDefaultSession(sessions) {
+            if (sessions.includes(NW_DEFAULT_SESSION)) return NW_DEFAULT_SESSION;
+            return sessions.find(s => !s.includes('MASTER')) || sessions[0];
+        }
+
+        function renderNwPick(container, label, items, selected, onPick) {
+            container.innerHTML = '';
+            const tag = document.createElement('span');
+            tag.className = 'nw-pick-label';
+            tag.textContent = label;
+            container.appendChild(tag);
+            items.forEach(item => {
+                const btn = document.createElement('button');
+                btn.type = 'button';
+                btn.className = 'menu-btn nw-pick-btn' + (item.id === selected ? ' selected' : '');
+                btn.textContent = item.label;
+                btn.setAttribute('role', 'radio');
+                btn.setAttribute('aria-checked', String(item.id === selected));
+                // mousedown + preventDefault: a click would pull focus off the
+                // name input, and the next keystrokes would go nowhere.
+                btn.addEventListener('mousedown', (e) => { e.preventDefault(); onPick(item.id); });
+                container.appendChild(btn);
+            });
+        }
+
+        function renderNwPickers() {
+            const sessions = nwSessions();
+            if (!sessions.includes(nwSession)) nwSession = nwDefaultSession(sessions);
+            renderNwPick(nwAgentPick, 'AGENT', NW_AGENTS, nwAgent, setNwAgent);
+            renderNwPick(nwSessionPick, 'SESSION',
+                sessions.map(s => ({ id: s, label: s })), nwSession,
+                (id) => { nwSession = id; renderNwPickers(); });
+            const agent = NW_AGENTS.find(a => a.id === nwAgent);
+            nwCommand.textContent = `${nwSession}:  $ ${agent.command}`;
+        }
+
+        function setNwAgent(id) {
+            nwAgent = id;
+            localStorage.setItem(NW_AGENT_KEY, id);
+            renderNwPickers();
+        }
+
+        function cycleNwAgent(delta) {
+            const i = NW_AGENTS.findIndex(a => a.id === nwAgent);
+            setNwAgent(NW_AGENTS[(i + delta + NW_AGENTS.length) % NW_AGENTS.length].id);
+        }
+
+        function cycleNwSession(delta) {
+            const sessions = nwSessions();
+            const i = Math.max(0, sessions.indexOf(nwSession));
+            nwSession = sessions[(i + delta + sessions.length) % sessions.length];
+            renderNwPickers();
+        }
+
         function createNewWindow() {
             newWindowInput.value = '';
             nwTypedValue = '';
             nwActiveIndex = -1;
+            nwSession = nwDefaultSession(nwSessions());
+            renderNwPickers();
             newWindowModal.classList.add('show');
             // Render immediately from the previous fetch so the list is never
             // blank, then refresh — mtimes move while the page stays open.
@@ -3580,7 +3782,7 @@
                 const response = await fetch('/api/new-window-named', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name }),
+                    body: JSON.stringify({ name, agent: nwAgent, session: nwSession }),
                 });
                 const data = await response.json();
                 if (data.success && data.target) {
@@ -3592,7 +3794,8 @@
                     localStorage.setItem('tmux-selected-target', data.target);
                     sessionSelect.value = '';
                     await loadWindows();
-                    showStatus((data.existing ? 'SWITCHED TO ' : 'NEW WINDOW: ') + name, 'success');
+                    const agentLabel = (data.agent || nwAgent).toUpperCase();
+                    showStatus((data.existing ? 'SWITCHED TO ' : `NEW ${agentLabel} WINDOW: `) + name, 'success');
                     setTimeout(() => commandInput.focus(), 150);
                 } else {
                     showStatus(data.error || 'FAILED TO CREATE WINDOW', 'error');
