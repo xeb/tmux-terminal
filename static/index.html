@@ -803,6 +803,73 @@
             text-overflow: ellipsis;
         }
 
+        /* EUNICE model picker. A MODEL button at the end of the agent row opens
+           this panel inside the modal; the filter input takes the keystrokes
+           and the list groups matches by provider. */
+        .nw-model-btn {
+            margin-left: auto;
+        }
+
+        .nw-models {
+            margin-top: 0.6rem;
+            border-top: 1px solid var(--matrix-dim);
+            border-bottom: 1px solid var(--matrix-dim);
+        }
+
+        .nw-models-filter {
+            font-size: 0.8rem;
+            padding: 0.5rem 1rem;
+        }
+
+        .nw-models-list {
+            max-height: 40vh;
+            overflow-y: auto;
+        }
+
+        .nw-models-group {
+            padding: 0.4rem 1rem 0.1rem;
+            font-size: 0.6rem;
+            letter-spacing: 0.08em;
+            color: var(--matrix-dim);
+        }
+
+        .nw-model-item {
+            display: flex;
+            align-items: baseline;
+            gap: 0.5rem;
+            padding: 0.35rem 1rem;
+            font-family: 'IBM Plex Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--matrix-green);
+            cursor: pointer;
+        }
+
+        .nw-model-item.empty {
+            cursor: default;
+            color: var(--matrix-dim);
+        }
+
+        .nw-model-item.active,
+        .nw-model-item:not(.empty):hover {
+            background: var(--matrix-green);
+            color: var(--void);
+        }
+
+        .nw-model-item .nw-model-meta {
+            flex: 1;
+            min-width: 0;
+            font-size: 0.6rem;
+            color: var(--matrix-dim);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+        }
+
+        .nw-model-item.active .nw-model-meta,
+        .nw-model-item:not(.empty):hover .nw-model-meta {
+            color: var(--void);
+        }
+
         .nw-suggest {
             position: absolute;
             top: 100%;
@@ -1712,6 +1779,10 @@
             <div class="modal-header">New Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B c</span></div>
             <div class="nw-pick" id="nwAgentPick" role="radiogroup" aria-label="Agent"></div>
             <div class="nw-pick" id="nwSessionPick" role="radiogroup" aria-label="tmux session"></div>
+            <div class="nw-models" id="nwModels" hidden>
+                <input type="text" class="rename-input nw-models-filter" id="nwModelFilter" placeholder="Type to filter models…" autocomplete="off" spellcheck="false" aria-label="Filter models">
+                <div class="nw-models-list" id="nwModelList" role="listbox"></div>
+            </div>
             <div class="nw-cmd" id="nwCommand" aria-live="polite"></div>
             <input type="text" class="rename-input" id="newWindowInput" placeholder="Project name (a-z, 0-9, . _ -)" autocomplete="off" spellcheck="false">
             <div class="rename-hint">Enter to create • Tab agent • ⇧Tab session • Esc to cancel</div>
@@ -3513,6 +3584,25 @@
 
             // Handle new-window prompt
             if (newWindowModal.classList.contains('show')) {
+                if (nwModelsOpen()) {
+                    if (e.key === 'Escape') { e.preventDefault(); closeNwModels(); return true; }
+                    if (e.key === 'ArrowDown') { e.preventDefault(); moveNwModelActive(1); return true; }
+                    if (e.key === 'ArrowUp') { e.preventDefault(); moveNwModelActive(-1); return true; }
+                    if (e.key === 'Enter') {
+                        e.preventDefault();
+                        const items = filterNwModels(nwModelCatalog, nwModelFilter.value);
+                        if (nwModelCatalog && items.length) pickNwModel(items[nwModelActive].id);
+                        return true;
+                    }
+                    if (e.key === 'Tab') {
+                        e.preventDefault();
+                        closeNwModels(false);
+                        if (e.shiftKey) cycleNwSession(1); else cycleNwAgent(1);
+                        setTimeout(() => newWindowInput.focus(), 30);
+                        return true;
+                    }
+                    return true; // everything else types into the filter
+                }
                 if (e.key === 'Escape') { e.preventDefault(); closeNewWindowModal(); return true; }
                 if (e.key === 'ArrowDown') { e.preventDefault(); moveNwActive(1); return true; }
                 if (e.key === 'ArrowUp') { e.preventDefault(); moveNwActive(-1); return true; }
@@ -3717,12 +3807,154 @@
             const sessions = nwSessions();
             if (!sessions.includes(nwSession)) nwSession = nwDefaultSession(sessions);
             renderNwPick(nwAgentPick, 'AGENT', NW_AGENTS, nwAgent, setNwAgent);
+            if (nwAgent === 'eunice') {
+                nwAgentPick.appendChild(nwModelButton());
+            } else if (nwModelsOpen()) {
+                closeNwModels();
+            }
             renderNwPick(nwSessionPick, 'SESSION',
                 sessions.map(s => ({ id: s, label: s })), nwSession,
                 (id) => { nwSession = id; renderNwPickers(); });
-            const agent = NW_AGENTS.find(a => a.id === nwAgent);
-            nwCommand.textContent = `${nwSession}:  $ ${agent.command}`;
+            nwCommand.textContent = `${nwSession}:  $ ${nwCommandFor(nwAgent)}`;
         }
+
+        // --- EUNICE model picker ---------------------------------------------
+        // The server runs `eunice --list-models` (GET /api/eunice-models) and
+        // validates the id again before typing it into the shell; this side
+        // only filters and remembers the choice.
+        const NW_MODEL_KEY = 'tmux-new-window-eunice-model';
+        const NW_MODEL_DEFAULT = { id: '', provider: '', aliases: [], note: 'let eunice choose', tools: false, isDefault: true };
+        const nwModels = document.getElementById('nwModels');
+        const nwModelFilter = document.getElementById('nwModelFilter');
+        const nwModelList = document.getElementById('nwModelList');
+        let nwModel = localStorage.getItem(NW_MODEL_KEY) || '';
+        let nwModelCatalog = null;   // fetched on first open, kept for the page
+        let nwModelError = '';
+        let nwModelActive = 0;
+
+        function nwCommandFor(agentId) {
+            if (agentId === 'eunice' && nwModel) return `eunice --model ${nwModel}`;
+            return NW_AGENTS.find(a => a.id === agentId).command;
+        }
+
+        function nwModelsOpen() {
+            return !nwModels.hidden;
+        }
+
+        function nwModelButton() {
+            const btn = document.createElement('button');
+            btn.type = 'button';
+            btn.className = 'menu-btn nw-pick-btn nw-model-btn' + (nwModelsOpen() ? ' selected' : '');
+            btn.textContent = `MODEL: ${nwModel || 'default'}`;
+            btn.title = 'Pick the model EUNICE starts with';
+            btn.addEventListener('mousedown', (e) => {
+                e.preventDefault();
+                if (nwModelsOpen()) closeNwModels(); else openNwModels();
+            });
+            return btn;
+        }
+
+        // Pure, so it can be checked outside the browser. Matches id, alias,
+        // note and provider; the "default" row stays whenever it could be meant.
+        function filterNwModels(catalog, query) {
+            const q = (query || '').trim().toLowerCase();
+            const hit = m => !q || [m.id, ...(m.aliases || []), m.note || '', m.provider]
+                .some(s => s.toLowerCase().includes(q));
+            const items = (catalog || []).filter(hit);
+            if (!q || 'default'.includes(q)) items.unshift(NW_MODEL_DEFAULT);
+            return items;
+        }
+
+        async function openNwModels() {
+            nwModels.hidden = false;
+            nwModelFilter.value = '';
+            nwModelActive = 0;
+            nwModelError = '';
+            renderNwPickers();
+            renderNwModelList();
+            setTimeout(() => nwModelFilter.focus(), 30);
+            if (nwModelCatalog) return;
+            try {
+                const response = await fetch('/api/eunice-models');
+                const data = await response.json();
+                if (data.success) nwModelCatalog = data.models;
+                else nwModelError = data.error || 'COULD NOT LIST MODELS';
+            } catch (err) {
+                nwModelError = 'CONNECTION ERROR';
+            }
+            if (nwModelsOpen()) renderNwModelList();
+        }
+
+        function closeNwModels(refocus = true) {
+            if (nwModels.hidden) return;
+            nwModels.hidden = true;
+            renderNwPickers();
+            if (refocus) setTimeout(() => newWindowInput.focus(), 30);
+        }
+
+        function renderNwModelList() {
+            const items = filterNwModels(nwModelCatalog, nwModelFilter.value);
+            nwModelActive = items.length ? Math.min(Math.max(0, nwModelActive), items.length - 1) : 0;
+            nwModelList.innerHTML = '';
+            const empty = (text) => {
+                const row = document.createElement('div');
+                row.className = 'nw-model-item empty';
+                row.textContent = text;
+                nwModelList.appendChild(row);
+            };
+            if (nwModelError) { empty(nwModelError); return; }
+            if (!nwModelCatalog) { empty('LOADING…'); return; }
+            if (items.length === 0) { empty('NO MATCHES'); return; }
+            let lastProvider = null;
+            items.forEach((m, i) => {
+                if (!m.isDefault && m.provider !== lastProvider) {
+                    const group = document.createElement('div');
+                    group.className = 'nw-models-group';
+                    group.textContent = m.provider.toUpperCase();
+                    nwModelList.appendChild(group);
+                    lastProvider = m.provider;
+                }
+                const row = document.createElement('div');
+                row.className = 'nw-model-item' + (i === nwModelActive ? ' active' : '');
+                row.setAttribute('role', 'option');
+                row.setAttribute('aria-selected', String(i === nwModelActive));
+                const name = document.createElement('span');
+                name.className = 'nw-model-name';
+                name.textContent = m.isDefault ? 'default' : m.id;
+                const meta = document.createElement('span');
+                meta.className = 'nw-model-meta';
+                meta.textContent = [
+                    (m.aliases || []).join(', '),
+                    m.note,
+                    m.tools ? '✓ tools' : '',
+                    m.id === nwModel ? 'current' : '',
+                ].filter(Boolean).join(' · ');
+                row.appendChild(name);
+                row.appendChild(meta);
+                row.addEventListener('mousedown', (e) => { e.preventDefault(); pickNwModel(m.id); });
+                nwModelList.appendChild(row);
+            });
+            const active = nwModelList.querySelector('.nw-model-item.active');
+            if (active) active.scrollIntoView({ block: 'nearest' });
+        }
+
+        function moveNwModelActive(delta) {
+            const count = filterNwModels(nwModelCatalog, nwModelFilter.value).length;
+            if (!count) return;
+            nwModelActive = (nwModelActive + delta + count) % count;
+            renderNwModelList();
+        }
+
+        function pickNwModel(id) {
+            nwModel = id || '';
+            localStorage.setItem(NW_MODEL_KEY, nwModel);
+            closeNwModels();
+        }
+
+        nwModelFilter.addEventListener('input', () => {
+            nwModelActive = 0;
+            renderNwModelList();
+        });
 
         function setNwAgent(id) {
             nwAgent = id;
@@ -3747,6 +3979,7 @@
             nwTypedValue = '';
             nwActiveIndex = -1;
             nwSession = nwDefaultSession(nwSessions());
+            nwModels.hidden = true;
             renderNwPickers();
             newWindowModal.classList.add('show');
             // Render immediately from the previous fetch so the list is never
@@ -3760,6 +3993,7 @@
 
         function closeNewWindowModal() {
             newWindowModal.classList.remove('show');
+            nwModels.hidden = true;
             commandInput.focus();
         }
 
@@ -3782,7 +4016,10 @@
                 const response = await fetch('/api/new-window-named', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ name, agent: nwAgent, session: nwSession }),
+                    body: JSON.stringify({
+                        name, agent: nwAgent, session: nwSession,
+                        model: nwAgent === 'eunice' && nwModel ? nwModel : undefined,
+                    }),
                 });
                 const data = await response.json();
                 if (data.success && data.target) {

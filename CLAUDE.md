@@ -49,6 +49,11 @@ build: `make stop`, copy `target/release/tmux-terminal`, `static/` and
   session in the new-window modal. Each agent launches with approvals bypassed
   (`Agent::command` in `src/main.rs`); the modal shows the exact command.
   A missing `agent` field means Codex, so older clients keep working.
+- With EUNICE selected, a MODEL button opens a type-to-filter list inside the
+  modal, fed by `GET /api/eunice-models`, which runs `eunice --list-models`
+  through an interactive shell so it sees the same API keys the window will.
+  The choice is passed as `eunice --model <id>`; the server validates the id
+  and rejects a model for any other agent.
 - New windows go to session `0` by default. `MASTER` holds the backend tmux
   control processes and is only ever an explicit pick.
 - When a project has a `CLAUDE.md`, creating a window guarantees `AGENTS.md`

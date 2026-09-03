@@ -1,0 +1,72 @@
+
+Available Models
+
+✓ = supports function calling (tools)
+
+🧬 Abliteration AI (available) ✓  key file
+   - abliterated-model
+   - abliterated-model-large
+   - abliterated-model-large-v2 (default)
+
+🧠 Anthropic (unavailable) ✓  not set
+   - fable, fable-5.1 (claude-fable-5-1)
+   - haiku, haiku-4.5 (claude-haiku-4-5-20251001)
+   - opus, opus-5 (claude-opus-5)
+   - sonnet, sonnet-5 (claude-sonnet-5)
+
+☁️ Azure OpenAI (available) ✓  ...8nZH
+   - azure:<deployment-name> (use your Azure deployment name)
+
+⚡ Cerebras (available) ✓  key file
+   - cerebras:gemma-4-31b
+   - cerebras:gpt-oss-120b
+   - cerebras:qwen-3.8-27b
+
+💎 Gemini (available) ✓  ...Yog0
+   - gemini-3.1-pro-preview, pro (latest Pro)
+   - gemini-3.5-flash-lite (latest Flash-Lite)
+   - gemini-3.8-flash, flash (default)
+   - gemini-3.8-flash-cyber, cyber (restricted Fairwind access)
+
+💻 Local (available)  installed
+   - gemma4:31b (Gemma 4 31B Q4_K_M + MTP, ~19.5 GB, auto-built, NVIDIA ≥24 GB)
+   - hf:gemma4:26b (Gemma 4 26B Q4_K_M, ~16 GB)
+   - hf:gemma4:26b-q8 (Gemma 4 26B Q8_0, ~28 GB)
+   - hf:gemma4:e4b (Gemma 4 E4B Q4_K_M, ~4.5 GB)
+   - hf:gemma4:e4b-q5 (Gemma 4 E4B Q5_K_M, ~5.5 GB)
+   - hf:gemma4:e4b-q8 (Gemma 4 E4B Q8_0, ~8 GB)
+
+🦙 Ollama (available)  running
+   - deepseek-r1:14b ✓
+   - deepseek-r1:32b ✓
+   - deepseek-r1:70b ✓
+   - deepseek-r1:8b ✓
+   - gemma3:27b ✓
+   - gemma3:4b ✓
+   - gemma3:latest ✓
+   - gemma4:26b ✓
+   - gemma4:31b ✓
+   - gemma4:e4b ✓
+   - gemma4:latest ✓
+   - glm-4.7-flash:latest ✓
+   - gpt-oss:120b ✓
+   - gpt-oss:20b ✓
+   - gpt-oss:latest ✓
+   - llama3.1:latest ✓
+   - llama3.2-vision:11b ✓
+   - llava-llama3:latest
+   - llava:34b
+   - minicpm-v:latest
+   - qwen2.5vl:7b ✓
+   - qwen3-coder-next:latest ✓
+   - qwen3.5:27b ✓
+   - qwen3.5:9b ✓
+   - qwen3:8b ✓
+   - qwen3:latest ✓
+
+🤖 OpenAI (available) ✓  ...zOAA
+   - gpt-5.3-codex (agentic coding)
+   - gpt-5.6, gpt-5.6-sol (default/flagship)
+   - gpt-5.6-luna (fast/economical)
+   - gpt-5.6-terra (balanced)
+

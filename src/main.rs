@@ -1044,6 +1044,175 @@ impl Agent {
     }
 }
 
+/// The exact text typed into the new window's shell. Only EUNICE takes a
+/// model: the others pick theirs from their own configuration.
+fn launch_command(agent: Agent, model: Option<&str>) -> String {
+    match (agent, model) {
+        (Agent::Eunice, Some(model)) => format!("eunice --model {}", model),
+        _ => agent.command().to_string(),
+    }
+}
+
+/// Model ids are typed into a shell, so only the characters that appear in
+/// `eunice --list-models` output are allowed: `hf:gemma4:e4b`, `gpt-5.6-sol`.
+fn validate_model(raw: &str) -> Result<String, String> {
+    let model = raw.trim();
+    if model.is_empty() {
+        return Err("model must not be empty".to_string());
+    }
+    if model.len() > 120 {
+        return Err("model id is too long".to_string());
+    }
+    if model.starts_with('-') {
+        return Err("model must not start with '-'".to_string());
+    }
+    if !model
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '_' | ':' | '-'))
+    {
+        return Err("model may contain only letters, digits, '.', '_', ':', '-'".to_string());
+    }
+    Ok(model.to_string())
+}
+
+/// A blank model means "let the agent choose". A model for any agent other
+/// than EUNICE is a client bug, not something to pass through silently.
+fn requested_model(agent: Agent, raw: Option<&str>) -> Result<Option<String>, String> {
+    match raw.map(str::trim).filter(|s| !s.is_empty()) {
+        None => Ok(None),
+        Some(_) if agent != Agent::Eunice => Err("model applies to eunice only".to_string()),
+        Some(model) => validate_model(model).map(Some),
+    }
+}
+
+/// One model as `eunice --list-models` describes it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct EuniceModel {
+    provider: String,
+    id: String,
+    aliases: Vec<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    note: Option<String>,
+    /// Supports function calling. Per model where the list says so (Ollama),
+    /// otherwise inherited from the provider heading.
+    tools: bool,
+}
+
+/// Parse the human-readable model list:
+///
+/// ```text
+/// 💎 Gemini (available) ✓  ...Yog0
+///    - gemini-3.8-flash, flash (default)
+/// 🦙 Ollama (available)  running
+///    - deepseek-r1:14b ✓
+///    - llava:34b
+/// ```
+///
+/// Only models from available providers are offered, and template rows such as
+/// `azure:<deployment-name>` are skipped because they are not real ids.
+fn parse_eunice_models(output: &str) -> Vec<EuniceModel> {
+    struct Provider {
+        name: String,
+        available: bool,
+        tools: bool,
+    }
+    let mut models = Vec::new();
+    let mut provider: Option<Provider> = None;
+    for raw in output.lines() {
+        let line = raw.trim_end();
+        if line.trim().is_empty() {
+            continue;
+        }
+        if let Some(rest) = line.trim_start().strip_prefix("- ").filter(|_| line.starts_with(' ')) {
+            let Some(current) = &provider else { continue };
+            if !current.available {
+                continue;
+            }
+            let mut text = rest.trim();
+            let mut tools = current.tools;
+            if let Some(stripped) = text.strip_suffix('✓') {
+                tools = true;
+                text = stripped.trim_end();
+            }
+            let (ids, note) = match text.find(" (") {
+                Some(i) if text.ends_with(')') => {
+                    (text[..i].trim(), Some(text[i + 2..text.len() - 1].to_string()))
+                }
+                _ => (text, None),
+            };
+            let mut parts = ids.split(',').map(str::trim).filter(|s| !s.is_empty());
+            let Some(id) = parts.next() else { continue };
+            if id.contains('<') {
+                continue;
+            }
+            models.push(EuniceModel {
+                provider: current.name.clone(),
+                id: id.to_string(),
+                aliases: parts.map(str::to_string).collect(),
+                note,
+                tools,
+            });
+            continue;
+        }
+        if line.starts_with(char::is_whitespace) {
+            continue;
+        }
+        let Some(i) = line.find(" (available)").or_else(|| line.find(" (unavailable)")) else {
+            continue;
+        };
+        provider = Some(Provider {
+            name: line[..i]
+                .trim_start_matches(|c: char| !c.is_ascii_alphanumeric())
+                .trim()
+                .to_string(),
+            available: line[i..].starts_with(" (available)"),
+            tools: line[i..].contains('✓'),
+        });
+    }
+    models
+}
+
+/// The list the modal's model picker filters. Runs `eunice --list-models`
+/// fresh each time: providers appear and disappear with keys and daemons.
+///
+/// Through an interactive shell on purpose. The API keys that make providers
+/// available are exported from ~/.bashrc, which only runs for interactive
+/// shells, and the new window is one — so this is the list EUNICE itself
+/// will see there. The service's own environment has none of those keys.
+async fn eunice_models() -> impl IntoResponse {
+    let run = tokio::process::Command::new("bash")
+        .args(["-ic", "eunice --list-models"])
+        .stdin(std::process::Stdio::null())
+        // An interactive bash with no terminal complains about job control
+        // on stderr; that noise is not an error.
+        .stderr(std::process::Stdio::null())
+        .output();
+    match tokio::time::timeout(std::time::Duration::from_secs(20), run).await {
+        Ok(Ok(output)) if output.status.success() => (
+            StatusCode::OK,
+            Json(serde_json::json!({
+                "success": true,
+                "models": parse_eunice_models(&String::from_utf8_lossy(&output.stdout)),
+            })),
+        ),
+        Ok(Ok(output)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({
+                "success": false,
+                "error": String::from_utf8_lossy(&output.stderr).trim().to_string(),
+            })),
+        ),
+        Ok(Err(error)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(serde_json::json!({"success": false, "error": format!("could not run eunice: {}", error)})),
+        ),
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(serde_json::json!({"success": false, "error": "eunice --list-models timed out"})),
+        ),
+    }
+}
+
 /// An absent or blank `agent` field keeps the historical default, so older
 /// clients (the mobile app) keep getting Codex windows.
 fn requested_agent(raw: Option<&str>) -> Result<Agent, String> {
@@ -1138,8 +1307,8 @@ fn read_pane_cwd(target: &str) -> Result<std::path::PathBuf, String> {
 /// Start the chosen agent in a freshly-created interactive shell. Keep the
 /// literal payload and Enter in separate tmux calls: with `-l`, putting Enter
 /// in the same argv would type the word rather than press the key.
-fn launch_agent(target: &str, agent: Agent) -> Result<(), String> {
-    send_keys_literal(target, agent.command())?;
+fn launch_agent(target: &str, agent: Agent, model: Option<&str>) -> Result<(), String> {
+    send_keys_literal(target, &launch_command(agent, model))?;
     send_keys(target, &["Enter".to_string()])
 }
 
@@ -1221,6 +1390,9 @@ struct NewWindowRequest {
     agent: Option<String>,
     #[serde(default)]
     session: Option<String>,
+    /// EUNICE only: passed as `--model`.
+    #[serde(default)]
+    model: Option<String>,
 }
 
 /// The body is optional: the mobile app posts with no body and expects the
@@ -1238,6 +1410,15 @@ async fn new_window(body: Option<Json<NewWindowRequest>>) -> impl IntoResponse {
     };
     let session = match requested_session(payload.session.as_deref()) {
         Ok(session) => session,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"success": false, "error": error})),
+            );
+        }
+    };
+    let model = match requested_model(agent, payload.model.as_deref()) {
+        Ok(model) => model,
         Err(error) => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -1279,7 +1460,7 @@ async fn new_window(body: Option<Json<NewWindowRequest>>) -> impl IntoResponse {
                         })),
                     );
                 }
-                if let Err(error) = launch_agent(&target, agent) {
+                if let Err(error) = launch_agent(&target, agent, model.as_deref()) {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({
@@ -1297,6 +1478,7 @@ async fn new_window(body: Option<Json<NewWindowRequest>>) -> impl IntoResponse {
                         "target": target,
                         "agent": agent.name(),
                         "session": session,
+                        "command": launch_command(agent, model.as_deref()),
                     })),
                 )
             } else {
@@ -1327,6 +1509,9 @@ struct NewWindowNamedRequest {
     agent: Option<String>,
     #[serde(default)]
     session: Option<String>,
+    /// EUNICE only: passed as `--model`.
+    #[serde(default)]
+    model: Option<String>,
 }
 
 async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl IntoResponse {
@@ -1349,6 +1534,15 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
     };
     let session = match requested_session(payload.session.as_deref()) {
         Ok(session) => session,
+        Err(error) => {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(serde_json::json!({"success": false, "error": error})),
+            );
+        }
+    };
+    let model = match requested_model(agent, payload.model.as_deref()) {
+        Ok(model) => model,
         Err(error) => {
             return (
                 StatusCode::BAD_REQUEST,
@@ -1468,7 +1662,7 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
 
     // 6. Launch the chosen agent only after the instruction links are ready,
     //    then answer its first-launch trust prompt if it shows one.
-    if let Err(error) = launch_agent(&window_id, agent) {
+    if let Err(error) = launch_agent(&window_id, agent, model.as_deref()) {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
@@ -1487,6 +1681,7 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
             "success": true, "existing": false,
             "window_id": window_id, "target": target,
             "agent": agent.name(), "session": session,
+            "command": launch_command(agent, model.as_deref()),
         })),
     )
 }
@@ -2626,6 +2821,7 @@ async fn main() {
         .route("/api/config", get(get_config))
         .route("/api/new-window", post(new_window))
         .route("/api/new-window-named", post(new_window_named))
+        .route("/api/eunice-models", get(eunice_models))
         .route("/api/rename-window", post(rename_window))
         .route("/api/kill-window", post(kill_window))
         .route("/api/project-dirs", get(project_dirs))
@@ -2663,9 +2859,10 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_project_dirs, detect_agent, ensure_instruction_links, parse_working,
-        requested_agent, requested_session, strip_ansi, trust_prompt_answer,
-        validate_kill_target, validate_window_name, Agent, AgentKind,
+        collect_project_dirs, detect_agent, ensure_instruction_links, launch_command,
+        parse_eunice_models, parse_working, requested_agent, requested_model,
+        requested_session, strip_ansi, trust_prompt_answer, validate_kill_target,
+        validate_model, validate_window_name, Agent, AgentKind,
     };
 
     #[test]
@@ -2708,6 +2905,77 @@ mod tests {
         for agent in [Agent::Claude, Agent::Codex, Agent::Agy, Agent::Eunice] {
             assert_eq!(Agent::parse(agent.name()), Some(agent));
         }
+    }
+
+    // --- EUNICE model list, from a real `eunice --list-models` ---
+
+    const EUNICE_MODELS: &str = include_str!("../tests/fixtures/eunice/list_models.txt");
+
+    #[test]
+    fn lists_models_from_available_providers_only() {
+        let models = parse_eunice_models(EUNICE_MODELS);
+        assert!(models.iter().any(|m| m.id == "gemini-3.8-flash" && m.provider == "Gemini"));
+        // Anthropic is listed but has no key, so none of its models are offered.
+        assert!(models.iter().all(|m| m.provider != "Anthropic"));
+        assert!(models.iter().all(|m| !m.id.contains('<')), "templates are not selectable");
+        let providers: Vec<&str> = models.iter().map(|m| m.provider.as_str()).fold(Vec::new(), |mut acc, p| {
+            if acc.last() != Some(&p) {
+                acc.push(p);
+            }
+            acc
+        });
+        assert_eq!(providers, vec!["Abliteration AI", "Cerebras", "Gemini", "Local", "Ollama", "OpenAI"]);
+    }
+
+    #[test]
+    fn splits_aliases_and_notes() {
+        let models = parse_eunice_models(EUNICE_MODELS);
+        let flash = models.iter().find(|m| m.id == "gemini-3.8-flash").unwrap();
+        assert_eq!(flash.aliases, vec!["flash"]);
+        assert_eq!(flash.note.as_deref(), Some("default"));
+        assert!(flash.tools);
+        let sol = models.iter().find(|m| m.id == "gpt-5.6").unwrap();
+        assert_eq!(sol.aliases, vec!["gpt-5.6-sol"]);
+        assert_eq!(sol.note.as_deref(), Some("default/flagship"));
+        let local = models.iter().find(|m| m.id == "hf:gemma4:26b-q8").unwrap();
+        assert_eq!(local.note.as_deref(), Some("Gemma 4 26B Q8_0, ~28 GB"));
+        assert!(local.aliases.is_empty(), "commas inside the note are not aliases");
+    }
+
+    #[test]
+    fn reads_per_model_tool_support() {
+        let models = parse_eunice_models(EUNICE_MODELS);
+        let with = models.iter().find(|m| m.id == "deepseek-r1:14b").unwrap();
+        let without = models.iter().find(|m| m.id == "llava:34b").unwrap();
+        assert!(with.tools);
+        assert!(!without.tools);
+        assert_eq!(with.provider, "Ollama");
+        assert!(with.aliases.is_empty() && with.note.is_none());
+    }
+
+    #[test]
+    fn model_ids_are_shell_safe() {
+        assert_eq!(validate_model("gemini-3.8-flash").unwrap(), "gemini-3.8-flash");
+        assert_eq!(validate_model(" hf:gemma4:e4b ").unwrap(), "hf:gemma4:e4b");
+        for bad in ["", "  ", "-x", "a b", "a;b", "$(id)", "a/b", "azure:<name>"] {
+            assert!(validate_model(bad).is_err(), "should reject {bad:?}");
+        }
+    }
+
+    #[test]
+    fn eunice_launches_with_the_chosen_model() {
+        assert_eq!(launch_command(Agent::Eunice, Some("hf:gemma4:e4b")), "eunice --model hf:gemma4:e4b");
+        assert_eq!(launch_command(Agent::Eunice, None), "eunice");
+        assert_eq!(launch_command(Agent::Codex, None), "codex --yolo");
+    }
+
+    #[test]
+    fn a_model_only_applies_to_eunice() {
+        assert_eq!(requested_model(Agent::Eunice, Some("flash")).unwrap(), Some("flash".to_string()));
+        assert_eq!(requested_model(Agent::Eunice, Some("  ")).unwrap(), None);
+        assert_eq!(requested_model(Agent::Claude, None).unwrap(), None);
+        assert!(requested_model(Agent::Claude, Some("flash")).is_err());
+        assert!(requested_model(Agent::Eunice, Some("a b")).is_err());
     }
 
     // --- session selection ---
