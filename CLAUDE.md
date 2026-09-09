@@ -45,6 +45,12 @@ build: `make stop`, copy `target/release/tmux-terminal`, `static/` and
 
 ## Key Implementation Details
 
+- The black CLI badge opens the current session’s model/effort picker via
+  `POST /api/session-model` (`src/session_model.rs`, `static/session-model.js`).
+  It reads live CLI menus; Eunice uses pane-local tmux metadata. See
+  `docs/session-model-picker.md` for protocol, version and recovery details.
+- Working/waiting tags precede the badge; keep Menu anchored at the right edge.
+
 - New windows pick an agent (`claude`, `codex`, `agy`, `eunice`) and a tmux
   session in the new-window modal. Each agent launches with approvals bypassed
   (`Agent::command` in `src/main.rs`); the modal shows the exact command.

@@ -1,4 +1,5 @@
 mod picker;
+mod session_model;
 
 use axum::{
     body::Bytes,
@@ -48,6 +49,7 @@ struct CaptureRequest {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 enum AgentKind {
+    Claude,
     Codex,
     Agy,
     Eunice,
@@ -97,6 +99,18 @@ fn detect_agent(pane: &str) -> Option<AgentKind> {
     }
     if tail.iter().any(|line| is_eunice_marker(line)) {
         return Some(AgentKind::Eunice);
+    }
+    if tail.iter().any(|line| line.contains("Claude Code v"))
+        || (tail.iter().any(|line| line.trim_start().starts_with('❯'))
+            && tail.iter().any(|line| line.contains("bypass permissions on") || line.contains("? for shortcuts")))
+    {
+        return Some(AgentKind::Claude);
+    }
+    if let Some(menu) = session_model::parse(pane) {
+        return match menu.agent.as_str() {
+            "claude" => Some(AgentKind::Claude), "codex" => Some(AgentKind::Codex),
+            "agy" => Some(AgentKind::Agy), "eunice" => Some(AgentKind::Eunice), _ => None,
+        };
     }
     None
 }
@@ -2822,6 +2836,7 @@ async fn main() {
         .route("/api/new-window", post(new_window))
         .route("/api/new-window-named", post(new_window_named))
         .route("/api/eunice-models", get(eunice_models))
+        .route("/api/session-model", post(session_model::handle))
         .route("/api/rename-window", post(rename_window))
         .route("/api/kill-window", post(kill_window))
         .route("/api/project-dirs", get(project_dirs))
@@ -3227,7 +3242,7 @@ Antigravity CLI requires permission to read, edit, and execute files here.
     #[test]
     fn claude_shortcut_hint_is_not_agy() {
         // Claude Code prints the same hint, but without a model · effort tail.
-        assert_eq!(detect_agent("❯ \n─────\n  ? for shortcuts\n"), None);
+        assert_eq!(detect_agent("❯ \n─────\n  ? for shortcuts\n"), Some(AgentKind::Claude));
     }
 
     #[test]

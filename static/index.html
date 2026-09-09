@@ -510,6 +510,9 @@
             line-height: 1;
             letter-spacing: 0.08em;
             padding: 3px 5px;
+            cursor: pointer;
+            font-family: inherit;
+            min-height: 25px;
         }
 
         .session-select {
@@ -1582,11 +1585,11 @@
             <select class="session-select" id="sessionSelect">
                 <option value="">Loading...</option>
             </select>
-            <span class="agent-indicator" id="agentIndicator" title="This window is running Codex" hidden>CODEX</span>
-            <button class="menu-btn new-window-btn" id="newWindowBtn" title="New window" aria-label="New window">+</button>
-            <button class="menu-btn" id="menuBtn">☰ MENU</button>
             <button class="waiting-pill" id="waitingPill" title="Jump to a window waiting on a question"></button>
             <button class="waiting-pill busy-pill" id="busyPill" title="Jump to a window an agent is working in"></button>
+            <button type="button" class="agent-indicator" id="agentIndicator" title="Change model and effort" aria-haspopup="dialog" hidden>MODEL ▾</button>
+            <button class="menu-btn new-window-btn" id="newWindowBtn" title="New window" aria-label="New window">+</button>
+            <button class="menu-btn" id="menuBtn">☰ MENU</button>
             <input type="file" id="fileInput" multiple hidden>
         </div>
 
@@ -2321,13 +2324,14 @@
             workingBar.hidden = false;
         }
 
-        const AGENT_BADGES = { codex: 'CODEX', agy: 'AGY', eunice: 'EUNICE' };
+        const AGENT_BADGES = { claude: 'CLAUDE', codex: 'CODEX', agy: 'AGY', eunice: 'EUNICE' };
         function updateAgentIndicator(agent) {
             const label = AGENT_BADGES[agent];
             agentIndicator.hidden = !label;
             if (label) {
-                agentIndicator.textContent = label;
-                agentIndicator.title = `This window is running ${label}`;
+                agentIndicator.textContent = `${label} ▾`;
+                agentIndicator.title = `Change model and effort for this ${label} session`;
+                agentIndicator.setAttribute('aria-label', agentIndicator.title);
             }
         }
 
@@ -4544,5 +4548,6 @@
         refreshWindowStatus();
         setInterval(refreshWindowStatus, 3000);
     </script>
+    <script src="/session-model.js"></script>
 </body>
 </html>

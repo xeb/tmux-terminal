@@ -1,0 +1,22 @@
+╭───────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                        │
+│                                                   │
+│ model:       gpt-6-astra xhigh   /model to change │
+│ directory:   /tmp/model-picker-test       │
+│ permissions: YOLO mode                            │
+╰───────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+• You have 1 usage limit reset available. Run /usage to use one.
+
+
+  Select Reasoning Level for gpt-6-astra
+
+  1. Low                   Fast responses with lighter reasoning
+  2. Medium (default)      Balances speed and reasoning depth for everyday tasks
+  3. High                  Greater reasoning depth for complex problems
+› 4. Extra high (current)  Extra high reasoning depth for complex problems
+  5. More reasoning…       Max and Ultra consume usage limits faster
+
+  Press enter to confirm or esc to go back

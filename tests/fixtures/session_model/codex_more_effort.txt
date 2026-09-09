@@ -1,0 +1,20 @@
+╭───────────────────────────────────────────────────╮
+│ >_ OpenAI Codex (v0.153.4)                        │
+│                                                   │
+│ model:       gpt-6-astra xhigh   /model to change │
+│ directory:   /tmp/model-picker-test       │
+│ permissions: YOLO mode                            │
+╰───────────────────────────────────────────────────╯
+
+  Tip: New Use /fast to enable our fastest inference with increased plan usage.
+
+• You have 1 usage limit reset available. Run /usage to use one.
+
+
+  Advanced Reasoning
+  ⚠ Consumes usage limits faster
+
+› 1. Max    For difficult problems when quality matters more than speed · higher usage
+  2. Ultra  For demanding work using multiple agents · highest usage
+
+  Press enter to confirm or esc to go back
