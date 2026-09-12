@@ -1,5 +1,6 @@
 mod picker;
 mod session_model;
+mod web_assets;
 
 use axum::{
     body::Bytes,
@@ -13,13 +14,14 @@ use base64::{engine::general_purpose::STANDARD as BASE64, Engine as _};
 use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::sync::Arc;
-use tower_http::{cors::CorsLayer, services::ServeDir, set_header::SetResponseHeaderLayer};
+use tower_http::{cors::CorsLayer, services::ServeDir};
 
 #[derive(Clone)]
 struct AppConfig {
     gemini_api_key: String,
     gemini_model: String,
     tts_voice: String,
+    index_html: String,
 }
 
 #[derive(Deserialize)]
@@ -44,6 +46,12 @@ struct TmuxWindow {
 #[derive(Deserialize)]
 struct CaptureRequest {
     target: String,
+    /// Omitted by older clients, which retain the original 1000-line history.
+    history_lines: Option<usize>,
+}
+
+fn capture_history_lines(request: &CaptureRequest) -> usize {
+    request.history_lines.unwrap_or(1000).clamp(50, 1000)
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -60,6 +68,9 @@ struct CaptureResponse {
     /// Plain text remains the source for prompt parsing, status detection, and
     /// older clients.
     content: String,
+    has_more: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    question_queue: Option<picker::QuestionQueue>,
     /// The same pane with tmux's SGR attributes preserved. The web client uses
     /// this to reproduce terminal foregrounds and backgrounds (notably Codex's
     /// tinted composer) while mobile clients can safely ignore the new field.
@@ -78,6 +89,9 @@ struct CaptureResponse {
 }
 
 fn detect_agent(pane: &str) -> Option<AgentKind> {
+    if picker::codex_question_back_key(pane).is_some() {
+        return Some(AgentKind::Codex);
+    }
     // Content detection avoids a second tmux process on every one-second pane
     // poll. That extra display-message call doubled tmux command traffic and
     // made unrelated operations such as creating/listing windows queue behind
@@ -227,6 +241,7 @@ fn strip_ansi(input: &str) -> String {
 }
 
 async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse {
+    let history_lines = capture_history_lines(&payload);
     let target = if payload.target.is_empty() {
         "0".to_string()
     } else {
@@ -235,22 +250,32 @@ async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse 
 
     // Capture with terminal attributes. Plain text is derived from this one
     // snapshot so what the user sees and what the picker verifies cannot drift.
-    let result = Command::new("tmux")
-        .args(["capture-pane", "-p", "-e", "-t", &target, "-S", "-1000"])
-        .output();
+    // Read history size and capture in one tmux invocation. The web client
+    // starts with a small history and expands it only when scrolling back.
+    let result = tokio::process::Command::new("tmux")
+        .kill_on_drop(true)
+        .args(["display-message", "-p", "-t", &target, "#{history_size}", ";",
+            "capture-pane", "-p", "-e", "-t", &target, "-S", &format!("-{history_lines}")])
+        .output().await;
 
     match result {
         Ok(output) => {
             if output.status.success() {
-                let styled_content = String::from_utf8_lossy(&output.stdout).to_string();
+                let snapshot = String::from_utf8_lossy(&output.stdout);
+                let (history_size, styled_content) = snapshot.split_once('\n').unwrap_or(("0", ""));
+                let has_more = history_lines < 1000 && history_size.parse::<usize>().unwrap_or(0) > history_lines;
+                let styled_content = styled_content.to_string();
                 let content = strip_ansi(&styled_content);
                 let agent = detect_agent(&content);
                 // Parsed server-side and only here. If the client parsed too, the
                 // renderer and the committer would drift, and the failure mode is
                 // a card that shows one option and sends another.
                 let picker = picker::parse(&content);
+                let question_queue = picker::question_queue(&content);
                 (StatusCode::OK, Json(CaptureResponse {
                     content,
+                    has_more,
+                    question_queue,
                     styled_content: Some(styled_content),
                     window_closed: false,
                     agent,
@@ -259,6 +284,8 @@ async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse 
             } else {
                 (StatusCode::OK, Json(CaptureResponse {
                     content: String::new(),
+                    has_more: false,
+                    question_queue: None,
                     styled_content: None,
                     window_closed: true,
                     agent: None,
@@ -268,6 +295,8 @@ async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse 
         }
         Err(_) => (StatusCode::OK, Json(CaptureResponse {
             content: String::new(),
+            has_more: false,
+            question_queue: None,
             styled_content: None,
             window_closed: true,
             agent: None,
@@ -374,10 +403,108 @@ fn send_keys(target: &str, keys: &[String]) -> Result<(), String> {
     }
 }
 
+// Serialize picker transitions and normal text submission for the same pane.
+// Pin to a pane id so a window reorder cannot redirect an in-flight action.
+async fn lock_pane_action(target: &str) -> (String, tokio::sync::OwnedMutexGuard<()>) {
+    static LOCKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>> = std::sync::OnceLock::new();
+    let pane = Command::new("tmux").args(["display-message", "-p", "-t", target, "#{pane_id}"])
+        .output().ok().filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        .filter(|id| id.starts_with('%')).unwrap_or_else(|| target.to_string());
+    let lock = {
+        let mut locks = LOCKS.get_or_init(Default::default).lock().unwrap();
+        locks.retain(|_, lock| lock.strong_count() > 0);
+        if let Some(lock) = locks.get(&pane).and_then(|lock| lock.upgrade()) { lock }
+        else {
+            let lock = Arc::new(tokio::sync::Mutex::new(()));
+            locks.insert(pane.clone(), Arc::downgrade(&lock));
+            lock
+        }
+    };
+    (pane, lock.lock_owned().await)
+}
+
+fn question_mode_panes() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    static PANES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> = std::sync::OnceLock::new();
+    PANES.get_or_init(Default::default)
+}
+
+fn confirm_question_exit(target: &str, pane: &str) -> Result<(), String> {
+    let mut panes = question_mode_panes().lock().unwrap();
+    if panes.contains(target) && !picker::codex_main_prompt(pane) {
+        return Err("Could not confirm Codex's main prompt. Return to it in the terminal before sending text.".to_string());
+    }
+    panes.remove(target);
+    Ok(())
+}
+
+async fn return_to_main_prompt(target: &str) -> Result<(), String> {
+    for _ in 0..32 {
+        let pane = capture_visible(target).ok_or("window is gone")?;
+        let Some(key) = picker::codex_question_back_key(&pane) else { return confirm_question_exit(target, &pane) };
+        question_mode_panes().lock().unwrap().insert(target.to_string());
+        send_keys(target, &[key])?;
+        let mut changed = false;
+        for _ in 0..25 {
+            tokio::time::sleep(std::time::Duration::from_millis(40)).await;
+            let fresh = capture_visible(target).ok_or("window is gone")?;
+            if picker::codex_question_back_key(&fresh).is_none() { return confirm_question_exit(target, &fresh) }
+            // A previous-question transition changes its progress header. Timer
+            // changes alone must not cause repeated back keys against stale UI.
+            if picker::parse(&fresh).map(|p| p.fingerprint) != picker::parse(&pane).map(|p| p.fingerprint) {
+                changed = true;
+                break;
+            }
+        }
+        if !changed { return Err("Codex has not returned to its main prompt; try again".to_string()); }
+    }
+    Err("too many questions to return to the main prompt".to_string())
+}
+
+#[derive(Deserialize)]
+struct PickerOpenRequest { target: String, fingerprint: String }
+
+async fn picker_open(Json(payload): Json<PickerOpenRequest>) -> impl IntoResponse {
+    let (target, _guard) = lock_pane_action(&payload.target).await;
+    let Some(pane) = capture_visible(&target) else { return picker_conflict("window is gone", None) };
+    if let Some(picker) = picker::parse(&pane).filter(|p| p.codex_async) {
+        question_mode_panes().lock().unwrap().insert(target.clone());
+        return (StatusCode::OK, Json(PickerActionResponse { success: true, error: None,
+            picker: Some(picker), outcome: Some("changed".to_string()) }));
+    }
+    let Some(queue) = picker::question_queue(&pane).filter(|q| q.fingerprint == payload.fingerprint) else {
+        return picker_conflict("the pending questions changed — refresh and try again", None);
+    };
+    if let Err(error) = send_keys(&target, &[queue.open_key]) { return picker_conflict(&error, None); }
+    question_mode_panes().lock().unwrap().insert(target.clone());
+    for _ in 0..40 {
+        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        if let Some(picker) = capture_visible(&target).and_then(|p| picker::parse(&p)).filter(|p| p.codex_async) {
+            return (StatusCode::OK, Json(PickerActionResponse { success: true, error: None,
+                picker: Some(picker), outcome: Some("changed".to_string()) }));
+        }
+    }
+    let _ = return_to_main_prompt(&target).await;
+    picker_conflict("Could not read this question layout. Check the terminal and try again.", None)
+}
+
+#[derive(Deserialize)]
+struct PickerCloseRequest { target: String }
+
+async fn picker_close(Json(payload): Json<PickerCloseRequest>) -> impl IntoResponse {
+    let (target, _guard) = lock_pane_action(&payload.target).await;
+    match return_to_main_prompt(&target).await {
+        Ok(()) => (StatusCode::OK, Json(ApiResponse { success: true, error: None })),
+        Err(error) => (StatusCode::CONFLICT, Json(ApiResponse { success: false, error: Some(error) })),
+    }
+}
+
 /// Commit a choice. The client sends intent, not keystrokes: the cursor delta is
 /// computed here from a fresh capture, so there is no polling window in which the
 /// terminal could move out from under it.
-async fn picker_select(Json(payload): Json<PickerSelectRequest>) -> impl IntoResponse {
+async fn picker_select(Json(mut payload): Json<PickerSelectRequest>) -> impl IntoResponse {
+    let (target, _guard) = lock_pane_action(&payload.target).await;
+    payload.target = target;
     let current = match verify_picker(&payload.target, &payload.fingerprint) {
         Ok(p) => p,
         Err(e) => return e,
@@ -393,6 +520,18 @@ async fn picker_select(Json(payload): Json<PickerSelectRequest>) -> impl IntoRes
     // eats even arrow keys as literal escape bytes). Those rows, and anything
     // unnumbered, are reached by walking the cursor and pressing Enter.
     let chosen = &current.options[payload.index];
+    if current.codex_async && chosen.is_meta {
+        if !current.text_only && current.cursor != payload.index {
+            let Some(key) = picker::select_key(chosen.number) else {
+                return picker_conflict("this text option is not directly reachable", Some(current));
+            };
+            if let Err(error) = send_keys(&payload.target, &[key]) {
+                return picker_conflict(&error, Some(current));
+            }
+        }
+        return (StatusCode::OK, Json(PickerActionResponse { success: true, error: None,
+            picker: Some(current), outcome: Some("awaiting_text".to_string()) }));
+    }
     let digit = if picker::is_input_row(chosen) {
         None
     } else {
@@ -509,7 +648,9 @@ async fn walk_cursor_to(
 }
 
 /// Move the terminal's own cursor by one row without committing.
-async fn picker_step(Json(payload): Json<PickerStepRequest>) -> impl IntoResponse {
+async fn picker_step(Json(mut payload): Json<PickerStepRequest>) -> impl IntoResponse {
+    let (target, _guard) = lock_pane_action(&payload.target).await;
+    payload.target = target;
     let current = match verify_picker(&payload.target, &payload.fingerprint) {
         Ok(p) => p,
         Err(e) => return e,
@@ -532,38 +673,86 @@ async fn picker_step(Json(payload): Json<PickerStepRequest>) -> impl IntoRespons
 struct PickerTextRequest {
     target: String,
     text: String,
+    fingerprint: Option<String>,
 }
 
-/// Send a typed reply for an option that asked for one.
-///
-/// Deliberately NOT `/api/send`, which presses Enter three times 500ms apart as
-/// a delivery workaround for the fire-and-forget EXECUTE button. Those extra
-/// presses land in a TUI that queues input while it is busy, and can resubmit
-/// what was already sent. Here exactly one Enter is pressed.
-async fn picker_text(Json(payload): Json<PickerTextRequest>) -> impl IntoResponse {
-    let text = payload.text.trim().to_string();
-    if text.is_empty() {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse { success: false, error: Some("empty reply".to_string()) }),
-        );
+/// Submit a typed answer, keeping paste input separate from its submit key.
+/// Codex treats Enter within its paste burst window as a newline. A successful
+/// tmux write is therefore not evidence that an answer was submitted.
+async fn picker_text(Json(mut payload): Json<PickerTextRequest>) -> impl IntoResponse {
+    let (target, _guard) = lock_pane_action(&payload.target).await;
+    payload.target = target;
+    let fail = |status, message: String| (status, Json(PickerActionResponse {
+        success: false, error: Some(message), picker: None, outcome: None,
+    }));
+    let text = payload.text.trim();
+    let Some(fingerprint) = payload.fingerprint.as_deref() else {
+        // Claude's follow-up editor may outlive its original picker.
+        if capture_visible(&payload.target).and_then(|p| picker::parse(&p)).is_some_and(|p| p.codex_async) {
+            return fail(StatusCode::CONFLICT, "reopen the question before sending an answer".to_string());
+        }
+        if text.is_empty() { return fail(StatusCode::BAD_REQUEST, "empty reply".to_string()); }
+        if let Err(e) = send_keys_literal(&payload.target, text) { return fail(StatusCode::BAD_REQUEST, e); }
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        if let Err(e) = send_keys(&payload.target, &["Enter".to_string()]) { return fail(StatusCode::BAD_REQUEST, e); }
+        return (StatusCode::OK, Json(PickerActionResponse {
+            success: true, error: None, picker: None, outcome: Some("committed".to_string()),
+        }));
+    };
+    let mut current = match verify_picker(&payload.target, fingerprint) {
+        Ok(p) if p.codex_async && p.options.get(p.cursor).is_some_and(|o| o.is_meta) => p,
+        _ => return fail(StatusCode::CONFLICT, "question changed — reopen it before sending an answer".to_string()),
+    };
+    if let Some(draft) = &current.answer_draft {
+        // A retry or a recovered browser session must not append the answer
+        // again. An empty request explicitly submits the existing native draft.
+        if !text.is_empty() && draft.split_whitespace().collect::<Vec<_>>() != text.split_whitespace().collect::<Vec<_>>() {
+            return fail(StatusCode::CONFLICT, "an answer is already in Codex — submit that answer first".to_string());
+        }
+    } else {
+        if text.is_empty() { return fail(StatusCode::BAD_REQUEST, "empty reply".to_string()); }
+        if let Err(e) = send_keys_literal(&payload.target, text) { return fail(StatusCode::BAD_REQUEST, e); }
     }
 
-    // Literal first, then Enter as its own invocation — `send-keys -l <s> Enter`
-    // would type the word "Enter".
-    if let Err(e) = send_keys_literal(&payload.target, &text) {
-        return (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse { success: false, error: Some(e) }),
-        );
+    // Wait until the editor has actually rendered a stable draft, then leave
+    // more than Codex's 120ms Enter-suppression window before pressing Enter.
+    // Slow rendering never authorizes a key into an unrecognized question.
+    let mut previous_draft = None;
+    let mut ready = false;
+    for _ in 0..10 {
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+        let Ok(p) = verify_picker(&payload.target, fingerprint) else { break };
+        if !p.options.get(p.cursor).is_some_and(|o| o.is_meta) { break; }
+        ready = p.answer_draft.is_some() && p.answer_draft == previous_draft;
+        previous_draft = p.answer_draft.clone();
+        current = p;
+        if ready { break; }
     }
-    match send_keys(&payload.target, &["Enter".to_string()]) {
-        Ok(()) => (StatusCode::OK, Json(ApiResponse { success: true, error: None })),
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(ApiResponse { success: false, error: Some(e) }),
-        ),
+    if ready {
+        if let Err(e) = send_keys(&payload.target, &["Enter".to_string()]) { return fail(StatusCode::BAD_REQUEST, e); }
+        // Exactly one Enter. Repeated submits can answer the next question;
+        // only observed progress or a return to the composer confirms success.
+        for _ in 0..34 {
+            tokio::time::sleep(std::time::Duration::from_millis(60)).await;
+            let Some(pane) = capture_visible(&payload.target) else { continue };
+            if picker::codex_main_prompt(&pane) {
+                return (StatusCode::OK, Json(PickerActionResponse {
+                    success: true, error: None, picker: None, outcome: Some("committed".to_string()),
+                }));
+            }
+            if let Some(p) = picker::parse(&pane) {
+                if p.codex_async && p.fingerprint != fingerprint {
+                    return (StatusCode::OK, Json(PickerActionResponse {
+                        success: true, error: None, picker: Some(p), outcome: Some("changed".to_string()),
+                    }));
+                }
+                if p.fingerprint == fingerprint { current = p; }
+            }
+        }
     }
+    (StatusCode::OK, Json(PickerActionResponse {
+        success: true, error: None, picker: Some(current), outcome: Some("pending".to_string()),
+    }))
 }
 
 fn send_keys_literal(target: &str, text: &str) -> Result<(), String> {
@@ -707,7 +896,7 @@ async fn window_status() -> impl IntoResponse {
         .filter(|t| !t.trim().is_empty())
         .filter_map(|target| {
             let pane = capture_visible(target)?;
-            let waiting = picker::parse(&pane).is_some();
+            let waiting = picker::parse(&pane).is_some() || picker::question_queue(&pane).is_some();
             // A window at a prompt is not working, whatever the last status
             // line said — the question is the thing you need to act on.
             let working = if waiting { None } else { parse_working(&pane) };
@@ -768,6 +957,11 @@ async fn send_to_tmux(Json(payload): Json<SendCommand>) -> impl IntoResponse {
     } else {
         payload.session
     };
+
+    let (session, _guard) = lock_pane_action(&session).await;
+    if let Err(error) = return_to_main_prompt(&session).await {
+        return (StatusCode::CONFLICT, Json(ApiResponse { success: false, error: Some(error) }));
+    }
 
     let command = payload.command;
 
@@ -2023,6 +2217,10 @@ async fn get_config() -> impl IntoResponse {
     (StatusCode::OK, Json(ConfigResponse { large_mode }))
 }
 
+async fn index(State(config): State<Arc<AppConfig>>) -> axum::response::Html<String> {
+    axum::response::Html(config.index_html.clone())
+}
+
 #[derive(Deserialize)]
 struct SpeakRequest {
     text: String,
@@ -2815,19 +3013,25 @@ async fn main() {
         gemini_api_key: std::env::var("GEMINI_API_KEY").unwrap_or_default(),
         gemini_model: std::env::var("GEMINI_MODEL").unwrap_or_else(|_| "gemini-3-flash-preview".to_string()),
         tts_voice: std::env::var("TTS_VOICE").unwrap_or_else(|_| "alba".to_string()),
+        index_html: web_assets::prepare(std::path::Path::new("static"))
+            .expect("prepare versioned web assets"),
     });
 
     let port = std::env::var("PORT").unwrap_or_else(|_| "5533".to_string());
     let addr = format!("0.0.0.0:{}", port);
 
-    // Serve static files from the static directory with no-cache headers
+    // The HTML is revalidated; generated assets have immutable content URLs.
     let static_service = ServeDir::new("static").append_index_html_on_directories(true);
 
     let app = Router::new()
+        .route("/", get(index))
+        .route("/index.html", get(index))
         .route("/api/send", post(send_to_tmux))
         .route("/api/send-key", post(send_key))
         .route("/api/windows", get(list_windows))
         .route("/api/capture", post(capture_pane))
+        .route("/api/picker/open", post(picker_open))
+        .route("/api/picker/close", post(picker_close))
         .route("/api/picker/select", post(picker_select))
         .route("/api/picker/step", post(picker_step))
         .route("/api/picker/text", post(picker_text))
@@ -2859,10 +3063,7 @@ async fn main() {
         .with_state(config)
         .fallback_service(static_service)
         .layer(CorsLayer::permissive())
-        .layer(SetResponseHeaderLayer::overriding(
-            header::CACHE_CONTROL,
-            header::HeaderValue::from_static("no-cache, no-store, must-revalidate"),
-        ));
+        .layer(axum::middleware::from_fn(web_assets::cache_control));
 
     println!("TMUX Terminal running on http://{}", addr);
     println!("Make sure tmux is running with an active session!");

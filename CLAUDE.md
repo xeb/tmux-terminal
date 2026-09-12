@@ -6,7 +6,11 @@ Web-based tmux terminal interface written in Rust.
 
 ```
 src/main.rs         # Axum HTTP server with tmux command handlers
-static/index.html   # Single-page web interface with all JS/CSS inline
+static/index.html   # Page markup
+static/app.js       # UI, polling, and mobile viewport handling
+static/terminal.js  # Incremental ANSI renderer and adaptive polling
+static/app.css      # Styles and locally served font declarations
+src/web_assets.rs  # Automatic content-versioned assets and cache policy
 Makefile            # Build, install, and service management
 tmux-terminal.service  # systemd unit file
 ```
@@ -14,7 +18,7 @@ tmux-terminal.service  # systemd unit file
 ## Tech Stack
 
 - **Backend**: Rust with Axum web framework
-- **Frontend**: Vanilla JS with inline CSS, no build step
+- **Frontend**: Vanilla JS and CSS, no frontend build step
 - **Process Control**: Direct `tmux` CLI invocation via `std::process::Command`
 
 ## Architecture
@@ -25,7 +29,10 @@ The server exposes REST endpoints that shell out to `tmux` commands:
 - `tmux send-keys` for command input
 - `tmux new-window` for window creation
 
-Static files served from `static/` directory with no-cache headers.
+Source files live in `static/`. At startup the server publishes content-hashed
+copies under `static/assets/` (gitignored). HTML is revalidated; hashed assets
+are cached immutably; API responses remain `no-store`. Restart after source edits.
+See `docs/mobile-performance.md` for polling, viewport and browser checks.
 
 ## Build Commands
 
@@ -68,10 +75,15 @@ build: `make stop`, copy `target/release/tmux-terminal`, `static/` and
   directory; the server answers yes for windows it just created
   (`auto_accept_trust_prompt`). EUNICE never asks.
 - The working pill and agent badge recognise Claude, Codex, AGY and EUNICE.
-  The parsers live in both `src/main.rs` and `static/index.html` and must stay
+  The parsers live in both `src/main.rs` and `static/app.js` and must stay
   in step.
 - Uses `-l` flag with `send-keys` for literal input (prevents escape sequence interpretation)
-- Captures last 1000 lines of scrollback with `-S -1000`
+- Older clients capture 1000 scrollback lines. The website starts at 200 and
+  requests more on scroll, up to 1000, using `history_lines` on `/api/capture`.
+- Codex asynchronous questions have an explicit Answer questions entry button.
+  `/api/picker/open` reads the live queue hint; `/api/picker/close` returns to the
+  main prompt with back navigation, never Escape. `/api/send` also exits this
+  mode before typing normal commands. See `docs/codex-questions.md`.
 - Window selection persisted in browser localStorage
 - Hostname-based configuration for display modes
 - Prefix mode (Ctrl+B) implemented entirely in frontend JS

@@ -1,6 +1,7 @@
 .env
 /target
 /logs
+/static/assets/
 mobile/node_modules/
 mobile/.expo/
 mobile/dist/

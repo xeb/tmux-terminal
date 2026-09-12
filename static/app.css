@@ -1,0 +1,1798 @@
+/* cyrillic-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-0.woff2') format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-1.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-2.woff2') format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-3.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-4.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-5.woff2') format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-6.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-7.woff2') format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-8.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 500;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-9.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+/* cyrillic-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-10.woff2') format('woff2');
+  unicode-range: U+0460-052F, U+1C80-1C8A, U+20B4, U+2DE0-2DFF, U+A640-A69F, U+FE2E-FE2F;
+}
+/* cyrillic */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-11.woff2') format('woff2');
+  unicode-range: U+0301, U+0400-045F, U+0490-0491, U+04B0-04B1, U+2116;
+}
+/* vietnamese */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-12.woff2') format('woff2');
+  unicode-range: U+0102-0103, U+0110-0111, U+0128-0129, U+0168-0169, U+01A0-01A1, U+01AF-01B0, U+0300-0301, U+0303-0304, U+0308-0309, U+0323, U+0329, U+1EA0-1EF9, U+20AB;
+}
+/* latin-ext */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-13.woff2') format('woff2');
+  unicode-range: U+0100-02BA, U+02BD-02C5, U+02C7-02CC, U+02CE-02D7, U+02DD-02FF, U+0304, U+0308, U+0329, U+1D00-1DBF, U+1E00-1E9F, U+1EF2-1EFF, U+2020, U+20A0-20AB, U+20AD-20C0, U+2113, U+2C60-2C7F, U+A720-A7FF;
+}
+/* latin */
+@font-face {
+  font-family: 'IBM Plex Mono';
+  font-style: normal;
+  font-weight: 700;
+  font-display: swap;
+  src: url('/fonts/ibm-plex-mono-14.woff2') format('woff2');
+  unicode-range: U+0000-00FF, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+0304, U+0308, U+0329, U+2000-206F, U+20AC, U+2122, U+2191, U+2193, U+2212, U+2215, U+FEFF, U+FFFD;
+}
+
+:root {
+    --void: #ffffff;
+    --terminal-bg: #f8f8f8;
+    --matrix-green: #000000;
+    --matrix-dim: #444444;
+    --matrix-glow: #00000020;
+    --scanline-opacity: 0;
+}
+
+/* Desktop layout - larger fonts and input */
+@media (min-width: 1024px) and (hover: hover) and (pointer: fine) {
+    :root {
+        --output-font-size: 10pt;
+        --input-font-size: 14pt;
+        --input-height: 5.5em;
+    }
+}
+
+* {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+}
+
+html, body {
+    height: 100%;
+    overflow: hidden;
+    overscroll-behavior: none;
+}
+
+body {
+    font-family: 'IBM Plex Mono', monospace;
+    background: var(--void);
+    color: var(--matrix-green);
+    display: flex;
+    flex-direction: column;
+    position: fixed;
+    top: var(--app-top, 0px);
+    width: 100%;
+    height: var(--app-height, 100dvh);
+    padding: env(safe-area-inset-top) env(safe-area-inset-right)
+        env(safe-area-inset-bottom) env(safe-area-inset-left);
+}
+
+/* CRT Scanline Effect */
+.scanlines {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 1000;
+    background: repeating-linear-gradient(
+        0deg,
+        rgba(0, 255, 65, var(--scanline-opacity)) 0px,
+        rgba(0, 255, 65, var(--scanline-opacity)) 1px,
+        transparent 1px,
+        transparent 3px
+    );
+}
+
+
+/* Main Terminal Area */
+.terminal-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
+    gap: 0;
+    min-height: 0;
+}
+
+.split-container {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+    min-height: 0;
+}
+
+.terminal-frame {
+    flex: 1;
+    position: relative;
+    border: 1px solid var(--matrix-dim);
+    background: var(--terminal-bg);
+    display: flex;
+    flex-direction: column;
+    min-height: 0;
+}
+
+.terminal-frame::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    border: 1px solid var(--matrix-green);
+    opacity: 0.3;
+    pointer-events: none;
+}
+
+.terminal-header {
+    display: none;
+}
+
+.terminal-dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    background: var(--matrix-green);
+    box-shadow: 0 0 6px var(--matrix-green);
+    animation: blink 1s ease-in-out infinite;
+}
+
+@keyframes blink {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+}
+
+/* Output pane - bottom, takes remaining space */
+.output-frame {
+    flex: 1;
+    min-height: 0;
+}
+
+.output-content {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+    overflow-anchor: none;
+    width: 100%;
+    overflow-y: auto;
+    overflow-x: hidden;
+    background: transparent;
+    color: var(--matrix-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: var(--output-font-size, 6pt);
+    line-height: 1.2;
+    padding: 2px 4px;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+}
+
+.terminal-line { min-height: 1.2em; }
+.history-load {
+    position: absolute;
+    top: 4px;
+    right: 8px;
+    z-index: 1;
+    padding: 6px 10px;
+    border: 1px solid var(--matrix-dim);
+    background: var(--terminal-bg);
+    color: var(--matrix-green);
+    font: 12px 'IBM Plex Mono', monospace;
+    cursor: pointer;
+}
+
+.output-content::-webkit-scrollbar {
+    width: 4px;
+}
+
+.output-content::-webkit-scrollbar-track {
+    background: var(--terminal-bg);
+}
+
+.output-content a.terminal-link {
+    color: inherit;
+    text-decoration: underline;
+    text-underline-offset: 2px;
+    cursor: pointer;
+    border-radius: 1px;
+}
+
+.output-content a.terminal-link:hover {
+    background: var(--matrix-dim);
+    color: var(--terminal-bg);
+    text-decoration: none;
+}
+
+.output-content::-webkit-scrollbar-thumb {
+    background: var(--matrix-dim);
+}
+
+/* Input pane - top, fixed height */
+.input-frame {
+    flex: 0 0 var(--input-height, 5.5em) !important;
+    height: var(--input-height, 5.5em);
+    min-height: var(--input-height, 5.5em);
+    max-height: var(--input-height, 5.5em);
+}
+
+.command-input {
+    width: 100%;
+    height: 100%;
+    background: transparent;
+    border: none;
+    color: var(--matrix-green);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: var(--input-font-size, clamp(1rem, 4vw, 1.25rem));
+    padding: 4px 6px;
+    resize: none;
+    outline: none;
+    caret-color: var(--matrix-green);
+    line-height: 1.4;
+    -webkit-appearance: none;
+    appearance: none;
+    box-sizing: border-box;
+}
+
+.command-input::placeholder {
+    color: var(--matrix-dim);
+    opacity: 0.5;
+}
+
+.command-input::selection {
+    background: #0066cc;
+    color: #ffffff;
+}
+
+/* ── Claude picker ──────────────────────────────────────────────────
+   A live selection prompt in the pane, rendered as a real control. It is
+   a sibling of the output frame, keeping focus and drafts independent
+   of terminal updates. */
+.picker {
+    display: none;
+    flex-direction: column;
+    flex-shrink: 0;
+    border-bottom: 1px solid var(--matrix-dim);
+    background: var(--void);
+    outline: none;
+}
+.picker.show { display: flex; }
+.picker:focus-visible { box-shadow: inset 0 0 0 2px #0066cc; }
+.picker.stale { box-shadow: inset 0 0 0 2px #b3541e; }
+
+.picker-head {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 6px;
+    background: var(--terminal-bg);
+    border-bottom: 1px solid var(--matrix-dim);
+}
+.picker-chip {
+    font-size: 0.65rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    background: #cfe4fb;
+    color: #000;
+    padding: 1px 5px;
+    white-space: nowrap;
+}
+.picker-hint {
+    font-size: 0.6rem;
+    color: var(--matrix-dim);
+    letter-spacing: 0.06em;
+    margin-left: auto;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.picker-collapse {
+    background: none;
+    border: 1px solid var(--matrix-dim);
+    color: var(--matrix-dim);
+    font-family: inherit;
+    font-size: 0.6rem;
+    padding: 1px 5px;
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.picker-q {
+    padding: 6px 8px 2px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    line-height: 1.35;
+}
+
+.picker-body { display: flex; gap: 8px; padding: 2px 0 4px; min-height: 0; }
+.picker-body.has-preview { align-items: flex-start; }
+.picker-opts { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.picker-body.has-preview .picker-opts { flex: 0 0 40%; }
+
+.picker-preview {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    margin-right: 8px;
+    padding: 4px 6px;
+    border: 1px solid var(--matrix-dim);
+    background: var(--terminal-bg);
+    font-size: 0.6rem;
+    line-height: 1.15;
+    white-space: pre;
+    color: var(--matrix-green);
+}
+/* Below this width a side-by-side preview is unreadable, so it stacks. */
+@media (max-width: 760px) {
+    .picker-body.has-preview { flex-direction: column; }
+    .picker-body.has-preview .picker-opts { flex: 1 1 auto; }
+    .picker-preview { margin: 0 8px; width: calc(100% - 16px); }
+}
+
+.picker-opt {
+    display: grid;
+    grid-template-columns: 3px 1.6rem 1fr;
+    gap: 0 5px;
+    align-items: start;
+    width: 100%;
+    border: 0;
+    background: none;
+    color: inherit;
+    font-family: inherit;
+    font-size: 0.8rem;
+    text-align: left;
+    padding: 2px 8px 2px 0;
+    cursor: pointer;
+}
+.picker-opt .bar { align-self: stretch; background: transparent; }
+.picker-opt .num {
+    font-size: 0.7rem;
+    color: var(--matrix-dim);
+    text-align: right;
+    font-variant-numeric: tabular-nums;
+}
+.picker-opt[aria-selected="true"] { background: #eaf3fd; }
+.picker-opt[aria-selected="true"] .bar { background: #0066cc; }
+.picker-opt[aria-selected="true"] .num { color: #0066cc; font-weight: 700; }
+.picker-opt[aria-selected="true"] .label { font-weight: 700; }
+.picker-opt.armed .label { text-decoration: underline; }
+
+/* Only the highlighted option shows its description. Six labels with one
+   paragraph under the cursor is a menu; six with six is the wall we had. */
+.picker-desc {
+    display: grid;
+    grid-template-rows: 0fr;
+    transition: grid-template-rows 0.14s ease;
+}
+.picker-opt[aria-selected="true"] .picker-desc { grid-template-rows: 1fr; }
+.picker-desc > span {
+    overflow: hidden;
+    display: block;
+    font-size: 0.7rem;
+    font-weight: 400;
+    line-height: 1.35;
+    color: var(--matrix-dim);
+}
+.picker-opt[aria-selected="true"] .picker-desc > span { padding-top: 2px; }
+@media (prefers-reduced-motion: reduce) { .picker-desc { transition: none; } }
+
+.picker-meta-rule {
+    height: 1px;
+    background: var(--matrix-dim);
+    opacity: 0.4;
+    margin: 3px 8px 3px calc(8px + 3px);
+}
+.picker-opt.meta .label { color: var(--matrix-dim); }
+
+.picker-foot {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    border-top: 1px solid var(--matrix-dim);
+    background: var(--terminal-bg);
+}
+.picker-send {
+    background: var(--matrix-green);
+    color: var(--void);
+    border: 1px solid var(--matrix-green);
+    font-family: inherit;
+    font-size: 0.7rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    padding: 4px 10px;
+    cursor: pointer;
+}
+.picker-cancel {
+    background: none;
+    border: 1px solid var(--matrix-dim);
+    color: var(--matrix-dim);
+    font-family: inherit;
+    font-size: 0.7rem;
+    padding: 4px 8px;
+    cursor: pointer;
+    margin-left: auto;
+}
+.picker-cancel.armed { color: #b3541e; border-color: #b3541e; }
+.picker-sync {
+    font-size: 0.6rem;
+    color: var(--matrix-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+.picker-sync b { color: #0066cc; }
+.picker-sync.warn { color: #b3541e; }
+
+/* Text entry. Some options ("Type something.", "Chat about this") do not
+   answer anything on their own — they put Claude in a state where it is
+   waiting to be typed at. The card asks for that text instead of closing
+   and leaving the user to work it out. */
+.picker-text {
+    display: none;
+    flex-direction: column;
+    gap: 4px;
+    padding: 6px 8px 8px;
+}
+.picker.textmode .picker-text { display: flex; }
+.picker.textmode .picker-body,
+.picker.textmode .picker-foot { display: none; }
+.picker.codex-question.textmode .picker-foot { display: flex; justify-content: flex-end; }
+.picker.codex-question.textmode .picker-foot > :not(.picker-cancel):not(#pickerTextSend) { display: none; }
+.picker.codex-question:not(.textmode) #pickerTextSend { display: none; }
+
+.picker-text-label {
+    font-size: 0.65rem;
+    color: var(--matrix-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+}
+.picker-text-input {
+    width: 100%;
+    background: var(--terminal-bg);
+    border: 1px solid var(--matrix-green);
+    color: var(--matrix-green);
+    font-family: inherit;
+    font-size: 0.85rem;
+    padding: 5px 6px;
+    outline: none;
+    resize: vertical;
+    min-height: 3.2em;
+}
+.picker-text-row { display: flex; gap: 6px; align-items: center; }
+.picker-text-hint { font-size: 0.6rem; color: var(--matrix-dim); margin-left: auto; }
+
+/* Collapsed: never disappears while a question is pending. */
+.picker-bar {
+    display: none;
+    align-items: center;
+    gap: 6px;
+    padding: 4px 6px;
+    background: var(--void);
+    border-bottom: 1px solid var(--matrix-dim);
+    border-left: 3px solid #0066cc;
+    font-size: 0.7rem;
+    cursor: pointer;
+    font-family: inherit;
+    color: inherit;
+    text-align: left;
+    width: 100%;
+    flex-shrink: 0;
+}
+.picker-bar.show { display: flex; }
+
+/* Other windows waiting on a question. Without this you switch away and
+   forget, which is what makes switching away actually safe. */
+.waiting-pill {
+    display: none;
+    align-items: center;
+    gap: 4px;
+    background: #cfe4fb;
+    border: 1px solid #0066cc;
+    color: #003a72;
+    font-family: inherit;
+    font-size: 0.62rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    padding: 2px 6px;
+    cursor: pointer;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.waiting-pill.show { display: inline-flex; }
+
+/* Windows Claude is still working in. Deliberately quieter than the
+   waiting pill: busy is information, a question is a demand. */
+.busy-pill {
+    background: transparent;
+    border-color: var(--matrix-dim);
+    color: var(--matrix-green);
+}
+
+/* On a phone the bar has no room for the word, and a cut-off pill reads
+   as breakage. The dot and the count carry the meaning on their own. */
+@media (max-width: 560px) {
+    .waiting-word { display: none; }
+    .session-label { display: none; }
+    .waiting-pill { padding: 2px 5px; }
+}
+
+/* Session Input */
+.session-bar {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    background: var(--terminal-bg);
+    border-bottom: 1px solid var(--matrix-dim);
+    flex-shrink: 0;
+}
+
+.session-label {
+    font-size: 0.75rem;
+    color: var(--matrix-dim);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+    white-space: nowrap;
+}
+
+.agent-indicator {
+    flex-shrink: 0;
+    border: 1px solid #000;
+    background: #000;
+    color: #fff;
+    font-size: 0.58rem;
+    font-weight: 700;
+    line-height: 1;
+    letter-spacing: 0.08em;
+    padding: 3px 5px;
+    cursor: pointer;
+    font-family: inherit;
+    min-height: 25px;
+}
+
+.session-select {
+    flex: 1;
+    /* Let the dropdown absorb the squeeze rather than the buttons. */
+    min-width: 0;
+    background: var(--terminal-bg);
+    border: 1px solid var(--matrix-dim);
+    color: var(--matrix-green);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    padding: 4px 6px;
+    outline: none;
+    cursor: pointer;
+    appearance: none;
+    -webkit-appearance: none;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='%2300ff41' d='M2 4l4 4 4-4'/%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 4px center;
+    padding-right: 1.5rem;
+}
+
+.session-select:focus {
+    border-color: var(--matrix-green);
+    box-shadow: 0 0 10px var(--matrix-glow);
+}
+
+.session-select option {
+    background: var(--terminal-bg);
+    color: var(--matrix-green);
+    padding: 0.5rem;
+}
+
+@keyframes refresh-spin {
+    0%   { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.menu-btn {
+    background: transparent;
+    border: 1px solid var(--matrix-dim);
+    color: var(--matrix-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    padding: 4px 8px;
+    cursor: pointer;
+    transition: border-color 0.15s, color 0.15s, background 0.15s, transform 0.1s;
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    letter-spacing: 0.05em;
+    /* Without these the bar overflows once the waiting pill joins it:
+       the label wraps to two lines and the pill is cut off the edge. */
+    flex-shrink: 0;
+    white-space: nowrap;
+}
+
+.menu-btn:hover {
+    border-color: var(--matrix-green);
+    color: var(--matrix-green);
+}
+
+.menu-btn:active {
+    transform: scale(0.93);
+    background: var(--matrix-green);
+    color: var(--void);
+    border-color: var(--matrix-green);
+}
+
+/* Action Menu Modal */
+.action-menu {
+    background: var(--terminal-bg);
+    border: 1px solid var(--matrix-green);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    width: 90%;
+    max-width: 360px;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+    /* The overlay centres this box, so a list taller than the screen
+       gets clipped at BOTH ends and the last item becomes unreachable.
+       Cap it and let it scroll instead. */
+    max-height: 90%;
+    overflow-y: auto;
+}
+
+.action-menu .modal-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--matrix-dim);
+    font-weight: 700;
+    font-size: 0.85rem;
+    letter-spacing: 0.1em;
+}
+
+.action-menu-list {
+    display: flex;
+    flex-direction: column;
+}
+
+.action-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    padding: 1rem 1.25rem;
+    border: none;
+    border-bottom: 1px solid var(--matrix-dim);
+    background: transparent;
+    color: var(--matrix-green);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+    cursor: pointer;
+    text-align: left;
+    transition: background 0.1s;
+}
+
+.action-menu-item:last-child {
+    border-bottom: none;
+}
+
+/* Logout: visually separated from tmux actions */
+.action-menu-item.menu-logout,
+.action-menu-item.menu-kill {
+    border-top: 2px solid var(--matrix-dim);
+}
+
+.action-menu-item:hover, .action-menu-item:active {
+    background: var(--matrix-green);
+    color: var(--void);
+}
+
+.action-menu-item .action-icon {
+    font-size: 1.2rem;
+    width: 1.5rem;
+    text-align: center;
+    flex-shrink: 0;
+}
+
+.action-menu-item .action-label {
+    flex: 1;
+}
+
+.action-menu-item .action-shortcut {
+    font-size: 0.65rem;
+    color: var(--matrix-dim);
+    letter-spacing: 0.05em;
+}
+
+.action-menu-item:hover .action-shortcut,
+.action-menu-item:active .action-shortcut {
+    color: var(--void);
+    opacity: 0.7;
+}
+
+/* On a phone the full list is twelve rows tall and ran past the
+   viewport. Tighter type and padding fit it on screen; rows stay
+   around 44px so they are still comfortable thumb targets. */
+@media (max-width: 560px) {
+    .action-menu .modal-header {
+        padding: 0.6rem 1rem;
+        font-size: 0.75rem;
+    }
+
+    .action-menu-item {
+        padding: 0.7rem 1rem;
+        gap: 0.6rem;
+        font-size: 0.75rem;
+    }
+
+    .action-menu-item .action-icon {
+        font-size: 1rem;
+        width: 1.25rem;
+    }
+
+    .action-menu-item .action-shortcut {
+        font-size: 0.6rem;
+    }
+}
+
+/* Rename Modal */
+.rename-modal {
+    background: var(--terminal-bg);
+    border: 1px solid var(--matrix-green);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    min-width: 300px;
+    max-width: 80%;
+    padding: 0;
+    display: flex;
+    flex-direction: column;
+}
+
+.rename-modal .modal-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--matrix-dim);
+}
+
+.rename-input {
+    width: 100%;
+    background: transparent;
+    border: none;
+    border-bottom: 1px solid var(--matrix-dim);
+    color: var(--matrix-green);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.9rem;
+    padding: 0.75rem 1rem;
+    outline: none;
+    caret-color: var(--matrix-green);
+}
+
+.rename-input:focus {
+    border-bottom-color: var(--matrix-green);
+}
+
+.rename-hint {
+    padding: 0.5rem 1rem;
+    font-size: 0.65rem;
+    color: var(--matrix-dim);
+}
+
+/* Kill Window confirmation */
+.kill-target {
+    padding: 0.75rem 1rem 0.25rem;
+    font-size: 0.9rem;
+    color: var(--matrix-green);
+    word-break: break-all;
+}
+
+.kill-warning {
+    padding: 0 1rem 0.75rem;
+    font-size: 0.7rem;
+    color: var(--matrix-dim);
+    border-bottom: 1px solid var(--matrix-dim);
+}
+
+.kill-actions {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.75rem 1rem;
+}
+
+.kill-actions .menu-btn {
+    flex: 1;
+}
+
+.kill-actions .kill-confirm {
+    font-weight: 700;
+}
+
+/* New-window autocomplete. The suggestion list hangs BELOW the modal
+   box instead of living inside it: the overlay centres its child, so
+   growing the box would push the input upward every time the list
+   changed size. Absolute positioning keeps the modal — and the input
+   the user is typing into — exactly where it has always been. */
+.new-window-modal {
+    position: relative;
+}
+
+/* Agent and session pickers. Segmented buttons instead of dropdowns:
+   one tap on a phone, one Tab on a keyboard, and the whole set is
+   visible so nothing hides behind a closed select. */
+.nw-pick {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.6rem 1rem 0;
+}
+
+.nw-pick-label {
+    min-width: 3.4rem;
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    color: var(--matrix-dim);
+}
+
+.nw-pick-btn.selected,
+.nw-pick-btn.selected:hover {
+    background: var(--matrix-green);
+    color: var(--void);
+    border-color: var(--matrix-green);
+}
+
+/* The exact command the server will type into the new window, so the
+   flag behind each button is never a surprise. */
+.nw-cmd {
+    padding: 0.5rem 1rem 0.6rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.65rem;
+    color: var(--matrix-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+/* EUNICE model picker. A MODEL button at the end of the agent row opens
+   this panel inside the modal; the filter input takes the keystrokes
+   and the list groups matches by provider. */
+.nw-model-btn {
+    margin-left: auto;
+}
+
+.nw-models {
+    margin-top: 0.6rem;
+    border-top: 1px solid var(--matrix-dim);
+    border-bottom: 1px solid var(--matrix-dim);
+}
+
+.nw-models-filter {
+    font-size: 0.8rem;
+    padding: 0.5rem 1rem;
+}
+
+.nw-models-list {
+    max-height: 40vh;
+    overflow-y: auto;
+}
+
+.nw-models-group {
+    padding: 0.4rem 1rem 0.1rem;
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    color: var(--matrix-dim);
+}
+
+.nw-model-item {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.35rem 1rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    color: var(--matrix-green);
+    cursor: pointer;
+}
+
+.nw-model-item.empty {
+    cursor: default;
+    color: var(--matrix-dim);
+}
+
+.nw-model-item.active,
+.nw-model-item:not(.empty):hover {
+    background: var(--matrix-green);
+    color: var(--void);
+}
+
+.nw-model-item .nw-model-meta {
+    flex: 1;
+    min-width: 0;
+    font-size: 0.6rem;
+    color: var(--matrix-dim);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.nw-model-item.active .nw-model-meta,
+.nw-model-item:not(.empty):hover .nw-model-meta {
+    color: var(--void);
+}
+
+.nw-suggest {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    right: 0;
+    background: var(--terminal-bg);
+    border: 1px solid var(--matrix-green);
+    border-top: none;
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+}
+
+.nw-suggest-label {
+    padding: 0.35rem 1rem 0.15rem;
+    font-size: 0.6rem;
+    letter-spacing: 0.08em;
+    color: var(--matrix-dim);
+}
+
+.nw-suggest-item {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+    padding: 0.5rem 1rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.85rem;
+    color: var(--matrix-green);
+    cursor: pointer;
+}
+
+.nw-suggest-item.empty {
+    cursor: default;
+}
+
+.nw-suggest-item.active,
+.nw-suggest-item:not(.empty):hover {
+    background: var(--matrix-green);
+    color: var(--void);
+}
+
+.nw-suggest-item .nw-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.nw-suggest-item .nw-age {
+    font-size: 0.6rem;
+    color: var(--matrix-dim);
+}
+
+.nw-suggest-item.active .nw-age {
+    color: var(--void);
+}
+
+/* Send Button */
+.send-btn {
+    width: 100%;
+    padding: 12px;
+    background: transparent;
+    border: 1px solid var(--matrix-green);
+    color: var(--matrix-green);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 1rem;
+    font-weight: 700;
+    letter-spacing: 0.2em;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    transition: all 0.3s ease;
+    flex-shrink: 0;
+    text-transform: uppercase;
+}
+
+.send-btn::before {
+    content: '';
+    position: absolute;
+    top: 0;
+    left: -100%;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(
+        90deg,
+        transparent,
+        rgba(0, 255, 65, 0.2),
+        transparent
+    );
+    transition: left 0.5s ease;
+}
+
+.send-btn:hover::before,
+.send-btn:active::before {
+    left: 100%;
+}
+
+.send-btn:hover,
+.send-btn:active {
+    background: rgba(0, 0, 0, 0.05);
+    box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+}
+
+.send-btn:active {
+    transform: scale(0.98);
+}
+
+.send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+/* Status Messages */
+.status {
+    position: fixed;
+    bottom: 1rem;
+    left: 50%;
+    transform: translateX(-50%);
+    padding: 0.75rem 1.5rem;
+    background: var(--terminal-bg);
+    border: 1px solid var(--matrix-green);
+    font-size: 0.8rem;
+    z-index: 1001;
+    opacity: 0;
+    transition: opacity 0.3s ease;
+    pointer-events: none;
+}
+
+.status.show {
+    opacity: 1;
+}
+
+.status.error {
+    border-color: #ff0040;
+    color: #ff0040;
+}
+
+.status.success {
+    border-color: var(--matrix-green);
+    color: var(--matrix-green);
+}
+
+/* Vignette */
+.vignette {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    z-index: 998;
+    background: radial-gradient(
+        ellipse at center,
+        transparent 0%,
+        transparent 60%,
+        rgba(0, 0, 0, 0.4) 100%
+    );
+}
+
+/* Tmux Prefix Indicator */
+.prefix-indicator {
+    position: fixed;
+    top: 0.5rem;
+    right: 0.5rem;
+    padding: 0.5rem 0.75rem;
+    background: var(--terminal-bg);
+    border: 1px solid var(--matrix-green);
+    color: var(--matrix-green);
+    font-size: 0.7rem;
+    font-weight: 700;
+    z-index: 1002;
+    opacity: 0;
+    pointer-events: none;
+    transition: opacity 0.15s ease;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
+}
+
+.prefix-indicator.active {
+    opacity: 1;
+    pointer-events: auto;
+}
+
+.prefix-title {
+    font-size: 0.8rem;
+    margin-bottom: 0.25rem;
+    border-bottom: 1px solid var(--matrix-dim);
+    padding-bottom: 0.25rem;
+}
+
+.prefix-hints {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+    font-size: 0.65rem;
+    font-weight: 400;
+    color: var(--matrix-dim);
+}
+
+.prefix-hints span {
+    display: flex;
+    gap: 0.5rem;
+}
+
+.prefix-hints kbd {
+    color: var(--matrix-green);
+    font-weight: 700;
+    min-width: 1rem;
+}
+
+/* Help Modal */
+.help-modal {
+    background: var(--terminal-bg);
+    border: 1px solid var(--matrix-green);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    min-width: 280px;
+    max-width: 90%;
+    padding: 1rem;
+}
+
+.help-modal h2 {
+    font-size: 0.9rem;
+    margin-bottom: 0.75rem;
+    border-bottom: 1px solid var(--matrix-dim);
+    padding-bottom: 0.5rem;
+    letter-spacing: 0.1em;
+}
+
+.help-section {
+    margin-bottom: 1rem;
+}
+
+.help-section h3 {
+    font-size: 0.75rem;
+    color: var(--matrix-dim);
+    margin-bottom: 0.5rem;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.help-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 0.25rem 0;
+    font-size: 0.75rem;
+}
+
+.help-row kbd {
+    color: var(--matrix-green);
+    font-weight: 700;
+}
+
+.help-row span {
+    color: var(--matrix-dim);
+}
+
+/* Window List Modal */
+.modal-overlay {
+    position: fixed;
+    top: var(--app-top, 0px);
+    left: 0;
+    width: 100%;
+    height: var(--app-height, 100dvh);
+    padding: max(8px, env(safe-area-inset-top)) max(8px, env(safe-area-inset-right))
+        max(8px, env(safe-area-inset-bottom)) max(8px, env(safe-area-inset-left));
+    background: rgba(0, 0, 0, 0.8);
+    z-index: 2000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+}
+
+.modal-overlay.show {
+    display: flex;
+}
+
+.window-modal {
+    background: var(--terminal-bg);
+    border: 1px solid var(--matrix-green);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    min-width: 300px;
+    max-width: 80%;
+    max-height: 70%;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+}
+
+.modal-header {
+    padding: 0.75rem 1rem;
+    border-bottom: 1px solid var(--matrix-dim);
+    font-size: 0.8rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--matrix-green);
+}
+
+.modal-hint {
+    padding: 0.5rem 1rem;
+    font-size: 0.65rem;
+    color: var(--matrix-dim);
+    border-bottom: 1px solid var(--matrix-dim);
+}
+
+.window-list {
+    overflow-y: auto;
+    max-height: 300px;
+}
+
+.window-item {
+    padding: 0.5rem 1rem;
+    cursor: pointer;
+    display: flex;
+    gap: 1rem;
+    align-items: center;
+    transition: background 0.1s ease;
+    border-left: 2px solid transparent;
+}
+
+.window-item:hover {
+    background: rgba(0, 0, 0, 0.05);
+}
+
+.window-item.selected {
+    background: rgba(0, 0, 0, 0.1);
+    border-left-color: var(--matrix-green);
+}
+
+.window-item.current {
+    color: var(--matrix-green);
+    font-weight: 700;
+}
+
+.window-target {
+    font-weight: 700;
+    min-width: 80px;
+}
+
+.window-name {
+    color: var(--matrix-dim);
+    flex: 1;
+}
+
+.window-marker {
+    font-size: 0.7rem;
+    color: var(--matrix-green);
+}
+
+/* Image Preview Modal */
+.image-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 3000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+}
+
+.image-modal-overlay.show {
+    display: flex;
+}
+
+.image-modal-header {
+    color: var(--matrix-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.5rem 1rem;
+    max-width: 90vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: all;
+}
+
+.image-modal-content {
+    max-width: 90vw;
+    max-height: 80vh;
+    border: 1px solid var(--matrix-dim);
+    background: var(--terminal-bg);
+}
+
+.image-modal-content img {
+    display: block;
+    max-width: 90vw;
+    max-height: 80vh;
+    object-fit: contain;
+}
+
+.image-modal-hint {
+    color: var(--matrix-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6rem;
+    padding: 0.5rem;
+}
+
+.output-content a.image-link,
+.output-content a.file-link {
+    text-decoration-style: dashed;
+}
+
+/* File Viewer Modal */
+.file-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.85);
+    z-index: 3000;
+    display: none;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+}
+
+.file-modal-overlay.show {
+    display: flex;
+}
+
+.file-modal-header {
+    color: var(--matrix-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.7rem;
+    padding: 0.5rem 1rem;
+    max-width: 90vw;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    user-select: all;
+}
+
+.file-modal-content {
+    max-width: 90vw;
+    max-height: 80vh;
+    width: 80vw;
+    border: 1px solid var(--matrix-dim);
+    background: var(--terminal-bg);
+    overflow: auto;
+}
+
+.file-modal-content pre {
+    margin: 0;
+    padding: 1rem;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.75rem;
+    line-height: 1.4;
+    color: var(--matrix-green);
+    white-space: pre-wrap;
+    word-break: break-all;
+}
+
+.file-modal-content .json-key { color: #0066cc; }
+.file-modal-content .json-string { color: #2a8c2a; }
+.file-modal-content .json-number { color: #cc6600; }
+.file-modal-content .json-bool { color: #cc0066; }
+.file-modal-content .json-null { color: #999; }
+
+.file-modal-hint {
+    color: var(--matrix-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.6rem;
+    padding: 0.5rem;
+}
+
+.file-modal-loading {
+    color: var(--matrix-dim);
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 0.8rem;
+    padding: 2rem;
+}
+
+/* Visible keyboard focus for bar controls */
+.menu-btn:focus-visible {
+    outline: 1px solid var(--matrix-green);
+    outline-offset: 1px;
+}
+
+/* New window (+) button — sits in the session bar next to MENU */
+.new-window-btn {
+    font-size: 1.05rem;
+    font-weight: 700;
+    line-height: 1;
+    padding: 3px 10px;
+}
+
+/* Upload Modal */
+.upload-modal {
+    background: var(--terminal-bg);
+    border: 1px solid var(--matrix-green);
+    box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+    width: 90%;
+    max-width: 420px;
+    max-height: 80%;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.upload-modal .modal-header {
+    display: flex;
+    align-items: baseline;
+    gap: 0.5rem;
+}
+
+.upload-target {
+    font-weight: 400;
+    font-size: 0.6rem;
+    color: var(--matrix-dim);
+    text-transform: none;
+    letter-spacing: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.upload-list {
+    overflow-y: auto;
+    min-height: 2.5rem;
+}
+
+.upload-item {
+    padding: 0.6rem 1rem;
+    border-bottom: 1px solid var(--matrix-dim);
+}
+
+.upload-item:last-child {
+    border-bottom: none;
+}
+
+.upload-item-top {
+    display: flex;
+    justify-content: space-between;
+    gap: 0.75rem;
+    font-size: 0.75rem;
+    margin-bottom: 0.4rem;
+}
+
+.upload-name {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    flex: 1;
+}
+
+.upload-pct {
+    color: var(--matrix-dim);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+}
+
+/* Terminal-style progress bar: hairline track, solid fill */
+.upload-bar {
+    height: 8px;
+    border: 1px solid var(--matrix-dim);
+    background: var(--void);
+    overflow: hidden;
+}
+
+.upload-bar-fill {
+    height: 100%;
+    width: 0%;
+    background: var(--matrix-green);
+    transition: width 0.15s linear;
+}
+
+.upload-status {
+    margin-top: 0.4rem;
+    font-size: 0.6rem;
+    color: var(--matrix-dim);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.upload-item.done .upload-status {
+    color: var(--matrix-green);
+}
+
+.upload-item.error .upload-bar {
+    border-color: #ff0040;
+}
+
+.upload-item.error .upload-bar-fill {
+    background: #ff0040;
+}
+
+.upload-item.error .upload-status {
+    color: #ff0040;
+}
+
+.upload-actions {
+    display: flex;
+    gap: 0.5rem;
+    padding: 0.6rem 1rem;
+    border-top: 1px solid var(--matrix-dim);
+}
+
+.upload-actions .menu-btn {
+    flex: 1;
+    justify-content: center;
+    font-size: 0.7rem;
+    padding: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .upload-bar-fill { transition: none; }
+}
+
+/* Agent working indicator. Indeterminate on purpose: Claude and Codex
+   report elapsed time, never a total, so a filling bar would be a
+   fabricated percentage. The sweep says "running", the text says how
+   long. */
+.working-bar {
+    padding: 0.35rem 0.5rem 0.45rem;
+    border-bottom: 1px solid var(--matrix-dim);
+}
+
+.working-bar[hidden] {
+    display: none;
+}
+
+.working-line {
+    display: flex;
+    gap: 0.5rem;
+    align-items: baseline;
+    font-size: 0.65rem;
+    margin-bottom: 0.3rem;
+    min-width: 0;
+}
+
+.working-verb {
+    color: var(--matrix-green);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+
+.working-meta {
+    color: var(--matrix-dim);
+    font-variant-numeric: tabular-nums;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.working-track {
+    height: 8px;
+    border: 1px solid var(--matrix-dim);
+    background: var(--void);
+    overflow: hidden;
+}
+
+.working-fill {
+    height: 100%;
+    width: 30%;
+    background: var(--matrix-green);
+    animation: working-sweep 1.4s linear infinite;
+}
+
+@keyframes working-sweep {
+    from { transform: translateX(-110%); }
+    to   { transform: translateX(370%); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .working-fill { animation: none; width: 100%; opacity: 0.45; }
+}
+
+/* Command history list — the only way to reach history on a phone,
+   where the keyboard has no arrow keys. */
+.history-item {
+    gap: 0.6rem;
+    align-items: flex-start;
+}
+
+.history-num {
+    color: var(--matrix-dim);
+    font-variant-numeric: tabular-nums;
+    flex-shrink: 0;
+    min-width: 2ch;
+    text-align: right;
+}
+
+.history-cmd {
+    flex: 1;
+    min-width: 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
+    /* Long commands stay tappable without turning the list into a wall */
+    max-height: 3.6em;
+    overflow: hidden;
+}
+
+.history-empty {
+    padding: 1rem;
+    font-size: 0.7rem;
+    color: var(--matrix-dim);
+    text-align: center;
+}
+
+/* Keep controls and dialogs reachable with a keyboard or in landscape. */
+.modal-overlay > * { min-height: 0; }
+.help-modal, .rename-modal { max-height: 100%; overflow-y: auto; }
+.picker { max-height: 45%; min-height: 0; }
+.picker-body { overflow-y: auto; }
+.working-bar, .send-btn { flex-shrink: 0; }
+.file-modal-overlay, .image-modal-overlay {
+    top: var(--app-top, 0px);
+    height: var(--app-height, 100dvh);
+}
+.page-hidden .working-fill { animation-play-state: paused; }
+@media (pointer: coarse) {
+    /* Avoid focus zoom on iOS; keyboard focus is requested only by an edit. */
+    input, textarea, .rename-input, .nw-models-filter, .picker-text-input {
+        font-size: 16px;
+    }
+    .new-window-modal .nw-suggest { position: static; }
+    .new-window-modal { width: min(440px, 100%); }
+}
+@media (max-height: 500px) {
+    .input-frame {
+        flex-basis: 3.2em !important;
+        height: 3.2em;
+        min-height: 3.2em;
+        max-height: 3.2em;
+    }
+    .working-bar { padding: 2px 6px; }
+    .working-track { display: none; }
+    .working-line { margin-bottom: 0; }
+    .send-btn { padding: 6px; }
+    .picker { max-height: 40%; }
+}
+
+/* The question card scrolls independently; the command box stays available. */
+.picker { overflow: hidden; }
+.picker-head, .picker-foot { flex-shrink: 0; }
+.picker-q { overflow-y: auto; max-height: 4em; flex-shrink: 1; }
+.picker-body { flex: 1 1 auto; min-height: 1.2em; }
+.picker-text { overflow-y: auto; min-height: 0; flex-shrink: 1; }
+.picker-opt .label { min-width: 0; overflow-wrap: anywhere; }
+.picker-foot { flex-wrap: wrap; }
+
+/* iOS keyboards shrink VisualViewport without changing CSS media queries. */
+.compact-viewport .input-frame {
+    flex-basis: 3.2em !important;
+    height: 3.2em;
+    min-height: 3.2em;
+    max-height: 3.2em;
+}
+.compact-viewport .working-bar { padding: 2px 6px; }
+.compact-viewport .working-track { display: none; }
+.compact-viewport .working-line { margin-bottom: 0; }
+.compact-viewport .send-btn { padding: 6px; }
+.compact-viewport .picker { max-height: 40%; }
+.compact-viewport .picker.codex-question.textmode { max-height: 55%; }
+.compact-viewport .picker.codex-question .picker-text-label { display: none; }
+.status {
+    bottom: auto;
+    top: calc(var(--app-top, 0px) + var(--app-height, 100dvh) - 1rem);
+    transform: translate(-50%, -100%);
+    max-width: calc(100% - 2rem);
+    overflow-wrap: anywhere;
+}
+
+.compact-viewport .picker-hint { display: none; }
+.compact-viewport .picker-q { max-height: 2.4em; font-size: .75rem; }

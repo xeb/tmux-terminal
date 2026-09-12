@@ -1,0 +1,12 @@
+• Working (9m 06s • esc to interrupt)
+
+  1 of 2
+  Which option should we use?
+
+  › 1. First option (Recommended)
+    2. Second option with a long label
+       that wraps on a narrow terminal
+    3. Other
+
+  enter submit   ctrl + ] skip
+  shift + → main prompt   shift + ← next question

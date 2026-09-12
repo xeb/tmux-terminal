@@ -3,7 +3,7 @@
 (() => {
     const style = document.createElement('style');
     style.textContent = `
-        .sm-dialog { width: min(580px, calc(100vw - 24px)); max-height: 88dvh; display: flex; flex-direction: column; background: var(--terminal-bg); border: 1px solid var(--matrix-green); box-shadow: 0 12px 60px #0008; }
+        .sm-dialog { width: min(580px, calc(100vw - 24px)); max-height: 100%; display: flex; flex-direction: column; background: var(--terminal-bg); border: 1px solid var(--matrix-green); box-shadow: 0 12px 60px #0008; }
         .sm-context, .sm-note { padding: 10px 16px; font-size: .7rem; color: var(--matrix-dim); overflow-wrap: anywhere; }
         .sm-context { border-bottom: 1px solid var(--matrix-dim); }
         .sm-body { overflow-y: auto; min-height: 0; padding: 12px 16px; }

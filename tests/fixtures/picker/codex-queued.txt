@@ -1,0 +1,9 @@
+• Working (9m 06s • esc to interrupt)
+
+• Queued follow-up inputs
+  ? 2 questions
+    shift + ← to answer
+
+› Ask Codex to do anything
+
+  gpt-6-astra xhigh · /media/xeb/Evagrius/projects/tmux-terminal

@@ -85,6 +85,14 @@ pub struct Opt {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Picker {
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub codex_async: bool,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub text_only: bool,
+    /// Visible text already entered in Codex's answer editor. Never part of
+    /// the fingerprint; the website can submit it without typing it twice.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub answer_draft: Option<String>,
     /// Stable across cursor movement, changes when the question or options do.
     /// The commit endpoint refuses a mismatch, so a prompt can never be answered
     /// on the strength of a stale render.
@@ -260,6 +268,7 @@ pub fn parse(pane: &str) -> Option<Picker> {
     parse_claude_dialog(pane)
         .or_else(|| parse_claude_review(pane))
         .or_else(|| parse_codex_dialog(pane))
+        .or_else(|| parse_codex_async(pane))
 }
 
 fn parse_claude_dialog(pane: &str) -> Option<Picker> {
@@ -421,6 +430,9 @@ fn parse_claude_dialog(pane: &str) -> Option<Picker> {
     let fingerprint = fingerprint_of(&question, layout, &options);
 
     Some(Picker {
+        codex_async: false,
+        text_only: false,
+        answer_draft: None,
         fingerprint,
         header,
         question,
@@ -493,6 +505,9 @@ fn parse_claude_review(pane: &str) -> Option<Picker> {
 
     let fingerprint = fingerprint_of(&question, Layout::List, &options);
     Some(Picker {
+        codex_async: false,
+        text_only: false,
+        answer_draft: None,
         fingerprint,
         header: Some("Review".to_string()),
         question,
@@ -621,6 +636,9 @@ fn parse_codex_dialog(pane: &str) -> Option<Picker> {
         .to_string();
     let fingerprint = fingerprint_of(&question, Layout::List, &options);
     Some(Picker {
+        codex_async: false,
+        text_only: false,
+        answer_draft: None,
         fingerprint,
         header: Some(header),
         question,
@@ -1074,5 +1092,227 @@ mod tests {
         assert!(is_input_row(&multi_variant));
         assert!(is_input_row(&chat));
         assert!(!is_input_row(&real));
+    }
+}
+
+/// Codex 0.154's asynchronous questions are collapsed under the composer until
+/// the user explicitly enters them. Only a live queue plus a recognized hint
+/// can arm the entry button; ordinary transcript questions cannot.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct QuestionQueue {
+    pub count: usize,
+    pub fingerprint: String,
+    #[serde(skip)]
+    pub open_key: String,
+}
+
+fn question_hint_key(hint: &str) -> Option<&'static str> {
+    match hint.trim() {
+        "shift + ←" => Some("S-Left"),
+        "shift + →" => Some("S-Right"),
+        "⌥ + ↑" | "alt + ↑" => Some("M-Up"),
+        "⌥ + ↓" | "alt + ↓" => Some("M-Down"),
+        _ => None,
+    }
+}
+
+pub fn codex_main_prompt(pane: &str) -> bool {
+    let tail: Vec<_> = pane.lines().rev().take(20).collect();
+    let Some(composer) = tail.iter().position(|line| line.trim_start().starts_with('›')) else { return false };
+    tail[..composer].iter().any(|line| line.trim_start().starts_with("gpt-"))
+}
+
+pub fn question_queue(pane: &str) -> Option<QuestionQueue> {
+    let lines: Vec<_> = pane.lines().rev().take(80).collect::<Vec<_>>().into_iter().rev().collect();
+    let composer = lines.iter().rposition(|line| line.trim_start().starts_with('›'))?;
+    if !lines[composer..].iter().any(|line| line.trim_start().starts_with("gpt-")) {
+        return None;
+    }
+    let queue = lines[..composer].iter().rposition(|line| line.trim() == "• Queued follow-up inputs")?;
+    let count_re = regex::Regex::new(r"^\? (\d+) questions?(?: · .*)?$").ok()?;
+    for pair in lines[queue + 1..composer].windows(2) {
+        let Some(count) = count_re.captures(pair[0].trim()).and_then(|m| m[1].parse::<usize>().ok()) else { continue };
+        if count == 0 { continue; }
+        let hint = pair[1].trim().strip_suffix(" to answer")?;
+        let open_key = question_hint_key(hint)?.to_string();
+        return Some(QuestionQueue { count, fingerprint: format!("codex-questions:{count}:{open_key}"), open_key });
+    }
+    None
+}
+
+/// Back navigation preserves both answers-in-progress and the ordinary composer
+/// draft. Esc can interrupt the running agent, so it is never our exit key.
+pub fn codex_question_back_key(pane: &str) -> Option<String> {
+    let lines: Vec<_> = pane.lines().collect();
+    let (_, footer) = codex_async_footer(&lines)?;
+    for tip in footer.split("   ").map(str::trim) {
+        let hint = tip.strip_suffix(" main prompt").or_else(|| tip.strip_suffix(" prev question"));
+        if let Some(key) = hint.and_then(question_hint_key) { return Some(key.to_string()); }
+    }
+    None
+}
+
+fn codex_async_footer<'a>(lines: &'a [&'a str]) -> Option<(usize, String)> {
+    let end = lines.iter().rposition(|line| !line.trim().is_empty())? + 1;
+    let start = (end.saturating_sub(5)..end).rev().find(|&i| lines[i].contains("enter submit"))?;
+    let footer = lines[start..end].iter().map(|line| line.trim()).collect::<Vec<_>>().join("   ");
+    if footer.split("   ").any(|tip| {
+        let tip = tip.trim();
+        tip.is_empty() || !(tip == "enter submit" || tip.ends_with(" skip")
+            || tip.ends_with(" main prompt") || tip.ends_with(" prev question")
+            || tip.ends_with(" next question") || tip.ends_with(" queued messages")
+            || tip.starts_with("option "))
+    }) { return None; }
+    if !footer.contains(" skip") || !(footer.contains(" main prompt") || footer.contains(" prev question")) {
+        return None;
+    }
+    Some((start, footer))
+}
+
+fn parse_codex_async(pane: &str) -> Option<Picker> {
+    let all: Vec<_> = pane.lines().collect();
+    let (footer, footer_text) = codex_async_footer(&all)?;
+    let start = footer.saturating_sub(MAX_BLOCK_LINES);
+    let progress = regex::Regex::new(r"^\d+ of \d+$").ok()?;
+    let queue = (start..footer).rev().find(|&i| all[i].trim() == "• Queued follow-up inputs");
+    // The free-text layout leaves a blank line after the progress counter.
+    // Anchor above the question so blank lines or numbered lists in a draft
+    // cannot become a new question (and change its submission fingerprint).
+    let progress_line = (queue.map_or(start, |i| i + 1)..footer).find(|&i| progress.is_match(all[i].trim()));
+    let anchor = progress_line.or(queue);
+    let (question_start, question_end, first, text_only) = if let Some(anchor) = anchor {
+        let mut question_start = anchor + 1;
+        while question_start < footer && all[question_start].trim().is_empty() { question_start += 1; }
+        let mut question_end = question_start;
+        while question_end < footer && !all[question_end].trim().is_empty() { question_end += 1; }
+        let mut first = question_end;
+        while first < footer && all[first].trim().is_empty() { first += 1; }
+        let free_text_gap = progress_line.is_some_and(|i| all.get(i + 1).is_some_and(|l| l.trim().is_empty()));
+        let named = !free_text_gap && all.get(first).is_some_and(|l| scan_codex_option_row(l).is_some_and(|r| r.number == Some(1)));
+        (question_start, question_end, first, !named)
+    } else {
+        // Older/single-question layouts may have neither a queue nor a counter.
+        let named_first = (start..footer).rev().find(|&i| scan_codex_option_row(all[i]).is_some_and(|r| r.number == Some(1)));
+        if named_first.is_none() && all[start..footer].iter().any(|l| scan_codex_option_row(l).is_some()) { return None; }
+        let first = named_first.unwrap_or_else(|| {
+            let mut end = footer;
+            while end > start && all[end - 1].trim().is_empty() { end -= 1; }
+            while end > start && !all[end - 1].trim().is_empty() { end -= 1; }
+            end
+        });
+        let mut question_end = first;
+        while question_end > start && all[question_end - 1].trim().is_empty() { question_end -= 1; }
+        let mut question_start = question_end;
+        while question_start > start && !all[question_start - 1].trim().is_empty() { question_start -= 1; }
+        (question_start, question_end, first, named_first.is_none())
+    };
+    let header = progress_line.map(|i| format!("Question {}", all[i].trim()));
+    let question = all[question_start..question_end].iter().map(|l| l.trim()).collect::<Vec<_>>().join(" ");
+    if question.is_empty() { return None; }
+    let mut options: Vec<Opt> = Vec::new();
+    let mut cursor = None;
+    for line in if text_only { &all[0..0] } else { &all[first..footer] } {
+        if let Some(row) = scan_codex_option_row(line) {
+            if row.number != Some(options.len() as u32 + 1) { return None; }
+            if row.is_cursor { cursor = Some(options.len()); }
+            options.push(Opt { number: row.number, label: row.text, description: None, is_meta: false });
+        } else if !line.trim().is_empty() {
+            options.last_mut()?.label.push_str(&format!(" {}", line.trim()));
+        }
+    }
+    if text_only {
+        options.push(Opt { number: None, label: "Write an answer".to_string(), description: None, is_meta: true });
+        cursor = Some(0);
+    } else if options.len() < 2 { return None; }
+    if let Some(total) = regex::Regex::new(r"option \d+/(\d+)").ok()?.captures(&footer_text) {
+        if total[1].parse::<usize>().ok()? != options.len() { return None; }
+    }
+    let draft = if text_only {
+        all[first..footer].iter().map(|l| l.trim()).collect::<Vec<_>>().join("\n")
+    } else if cursor == Some(options.len() - 1) {
+        options.last()?.label.clone()
+    } else { String::new() };
+    let draft = draft.trim();
+    let answer_draft = (!draft.is_empty() && !matches!(draft, "Type your answer" | "Other" | "Other (write an answer)"))
+        .then(|| draft.to_string());
+    let last = options.last_mut()?;
+    // Codex always adds a final free-text option. Normalize its inline draft
+    // so typing does not change the question fingerprint.
+    last.is_meta = true;
+    last.label = if text_only { "Write an answer" } else { "Other (write an answer)" }.to_string();
+    let fingerprint = fingerprint_of(&format!("codex-async:{}:{question}", header.as_deref().unwrap_or("")), Layout::List, &options);
+    Some(Picker { codex_async: true, text_only, answer_draft, fingerprint, header: header.or(Some("Question".to_string())), question,
+        cursor: cursor?, layout: Layout::List, options, preview: None })
+}
+
+#[cfg(test)]
+mod async_question_tests {
+    use super::*;
+    const QUEUED: &str = include_str!("../tests/fixtures/picker/codex-queued.txt");
+    const ACTIVE: &str = include_str!("../tests/fixtures/picker/codex-async.txt");
+    const TEXT: &str = include_str!("../tests/fixtures/picker/codex-async-text.txt");
+
+    #[test]
+    fn recognizes_multiline_drafts_and_spaced_progress_from_phone_report() {
+        let p = parse(TEXT).unwrap();
+        assert!(p.codex_async && p.text_only);
+        assert_eq!(p.header.as_deref(), Some("Question 1 of 6"));
+        assert_eq!(p.question, "Which locations did you measure, and were these taken before food and training?");
+        assert_eq!(p.answer_draft.as_deref(), Some("Narrowest point and high near the thickest part\nBefore food"));
+        for draft in ["Type your answer", "First paragraph\n\nSecond paragraph", "1. First\n2. Second"] {
+            let pane = TEXT.replace(p.answer_draft.as_ref().unwrap().replace('\n', "\n  ").as_str(), draft);
+            assert_eq!(parse(&pane).unwrap().fingerprint, p.fingerprint);
+        }
+        assert_ne!(parse(&TEXT.replace("1 of 6", "2 of 6")).unwrap().fingerprint, p.fingerprint);
+    }
+
+    #[test]
+    fn recognizes_the_screenshot_queue_without_opening_a_picker() {
+        let queue = question_queue(QUEUED).unwrap();
+        assert_eq!(queue.count, 2);
+        assert_eq!(queue.open_key, "S-Left");
+        assert!(parse(QUEUED).is_none());
+        assert!(question_queue(&QUEUED.replace(" to answer", " edit last queued message")).is_none());
+        assert!(question_queue(&QUEUED.replace("shift + ←", "ctrl + x")).is_none());
+        assert!(question_queue(&format!("{QUEUED}\n› echo unrelated\nordinary shell output")).is_none());
+    }
+
+    #[test]
+    fn parses_async_options_and_safe_navigation() {
+        let picker = parse(ACTIVE).unwrap();
+        assert!(picker.codex_async);
+        assert_eq!(picker.header.as_deref(), Some("Question 1 of 2"));
+        assert_eq!(picker.options.len(), 3);
+        assert_eq!(picker.options[1].label, "Second option with a long label that wraps on a narrow terminal");
+        assert!(picker.options[2].is_meta);
+        assert_eq!(codex_question_back_key(ACTIVE).as_deref(), Some("S-Right"));
+        assert_eq!(codex_question_back_key(&ACTIVE.replace("shift + → main prompt", "⌥ + ↓ prev question")).as_deref(), Some("M-Down"));
+    }
+
+    #[test]
+    fn cursor_and_other_drafts_do_not_change_the_fingerprint() {
+        let selected = ACTIVE.replace("› 1.", "  1.").replace("  3. Other", "› 3. My own answer");
+        assert_eq!(parse(ACTIVE).unwrap().fingerprint, parse(&selected).unwrap().fingerprint);
+        assert_eq!(parse(&selected).unwrap().cursor, 2);
+        assert_ne!(parse(ACTIVE).unwrap().fingerprint, parse(&ACTIVE.replace("1 of 2", "2 of 2")).unwrap().fingerprint);
+    }
+
+    #[test]
+    fn refuses_answered_or_clipped_async_questions() {
+        assert!(parse(&format!("{ACTIVE}\n› Ask Codex to do anything\n  gpt-6-astra xhigh")).is_none());
+        assert!(parse(&ACTIVE.replace("enter submit", "Expand terminal to read the entire option")).is_none());
+        assert!(parse(&ACTIVE.replace("ctrl + ] skip", "ctrl + ] skip   option 1/8")).is_none());
+    }
+
+    #[test]
+    fn parses_a_free_text_question_without_treating_it_as_a_command() {
+        let pane = "\n  What should I investigate?\n\n  Type your answer\n\n  enter submit   ctrl + ] skip\n  shift + → main prompt\n";
+        let p = parse(pane).unwrap();
+        assert!(p.codex_async && p.text_only);
+        assert_eq!(p.question, "What should I investigate?");
+        assert_eq!(p.options[0].number, None);
+        assert_eq!(p.fingerprint, parse(&pane.replace("Type your answer", "a draft")).unwrap().fingerprint);
+        assert!(!codex_main_prompt(pane));
+        assert!(codex_main_prompt(QUEUED));
     }
 }
