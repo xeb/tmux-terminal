@@ -1741,6 +1741,12 @@ body {
     height: var(--app-height, 100dvh);
 }
 .page-hidden .working-fill { animation-play-state: paused; }
+@media (min-width: 768px) and (pointer: fine) {
+    .new-window-modal { width: 640px; }
+    /* Include suggestions in the dialog height so desktop space is usable. */
+    .new-window-modal .nw-suggest { position: static; }
+    .new-window-modal > * { flex-shrink: 0; }
+}
 @media (pointer: coarse) {
     /* Avoid focus zoom on iOS; keyboard focus is requested only by an edit. */
     input, textarea, .rename-input, .nw-models-filter, .picker-text-input {
