@@ -7,6 +7,7 @@ A web-based terminal interface for interacting with tmux sessions. Features a re
 - Web interface to send commands to tmux panes
 - Live capture of pane output (polling every second)
 - Window management (list, switch, create new)
+- Multiple hosts through SSH, with host/session/window selection and uploads to the selected host
 - Tmux-style keyboard shortcuts with `Ctrl+B` prefix
 - Retro CRT scanline visual effects
 - Runs as a systemd user service
@@ -57,6 +58,7 @@ make status     # Check service status
 
 ## Configuration
 
+- **Hosts**: Defaults to local `not-invented-here` and SSH alias `vade`. Set `TMUX_HOSTS` to customize. See [multiple hosts](docs/multi-host.md).
 - **Port**: Set via `PORT` environment variable (default: `5533`)
 - **Large mode**: Automatically enabled when the server's hostname ends in `.roam.internal` (Cloudflare WARP private DNS). Edit `src/main.rs` to match your own hostname if desired.
 

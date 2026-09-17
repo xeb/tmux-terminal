@@ -1,0 +1,55 @@
+│  ⠀⢀⣠⣴⣶⠿⠋⣩⡿⣿⡿⠻⣿⡇⢠⡄⢸⣿⠟⢿⣿⢿⣍⠙⠿⣶⣦⣄⡀⠀               clarify: clarify                                                                                     │
+│  ⠀⠀⠉⠉⠁⠶⠟⠋⠀⠉⠀⢀⣈⣁⡈⢁⣈⣁⡀⠀⠉⠀⠙⠻⠶⠈⠉⠉⠀⠀               code_execution: execute_code                                                                         │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣴⣿⡿⠛⢁⡈⠛⢿⣿⣦⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀               connections: manage_connections                                                                      │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠿⣿⣦⣤⣈⠁⢠⣴⣿⠿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀               delegation: delegate_task                                                                            │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠉⠻⢿⣿⣦⡉⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀               file: patch, read_file, search_files, write_file                                                     │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠘⢷⣦⣈⠛⠃⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀               image_gen: image_generate                                                                            │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢠⣴⠦⠈⠙⠿⣦⡄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀               (and 7 more toolsets...)                                                                             │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠸⣿⣤⡈⠁⢤⣿⠇⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀                                                                                                                    │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠉⠛⠷⠄⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀               Available Skills                                                                                     │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢀⣀⠑⢶⣄⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀               autonomous-ai-agents: claude-code, codex, computer-use, hermes-agent, opencode                       │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⣿⠁⢰⡆⠈⡿⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀               creative: architecture-diagram, ascii-video, baoyu-infographic, +7 more                              │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠳⠈⣡⠞⠁⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀               devops: sdlc-review                                                                                  │
+│  ⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠈⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀               email: email-inbox-triage, himalaya                                                                  │
+│                                               media: gif-search, songsee, youtube-content                                                          │
+│  glm-5.3-flash · Nous Research                note-taking: obsidian                                                                                │
+│  ⚠ YOLO mode — all approval prompts bypassed  productivity: airtable, box, document-to-action-items, docx, +10 more                                │
+│  /media/xeb/Evagrius/projects/tmux-terminal   research: arxiv, competitor-news-monitor, grounded-citations, llm-wiki                               │
+│  Session: 20260916_151535_a8cb0f              social-media: xurl                                                                                   │
+│                                               software-development: codebase-inspection, dogfood, github, +9 more                                  │
+│                                               web: blocked-page-recovery                                                                           │
+│                                                                                                                                                    │
+│                                               Profile: test                                                                                        │
+│                                               25 tools · 54 skills · /help for commands                                                            │
+╰────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────╯
+
+Welcome to Hermes Agent! Type your message or /help for commands.
+✦ Tip: Hermes loads project context from .hermes.md, AGENTS.md, CLAUDE.md, or .cursorrules (first match).
+
+  ⚠ tirith security scanner enabled but not available — command scanning will use pattern matching only
+⚠ 41 commits behind — run hermes update to update
+
+⚙️   /reasoning
+  Reasoning effort:  medium
+  Reasoning display: on ✓ (clamped to 10 lines)
+  Usage: /reasoning <none|minimal|low|medium|high|xhigh|max|ultra|show|hide|full|clamp> [--global]
+╭─ ⚙ Model Picker — Select Provider ─────────────╮
+│                                                │
+│ Current: z-ai/glm-5.3-flash on OpenRouter      │
+│                                                │
+│   Mixture of Agents (1 model)                  │
+│ ❯ OpenRouter (50 models)  ← current            │
+│   GitHub Copilot (36 models)                   │
+│   GitHub Copilot ACP (36 models)               │
+│   Google AI Studio (15 models)                 │
+│   OpenAI API (14 models)                       │
+│   Anthropic (13 models)                        │
+│   OpenCode Free (6 models)                     │
+│   Cancel                                       │
+│                                                │
+╰────────────────────────────────────────────────╯
+
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+test ❯ Plan a feature, then build it step by step
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────

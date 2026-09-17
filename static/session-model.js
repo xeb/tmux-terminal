@@ -60,7 +60,7 @@
         overlay.querySelectorAll('button').forEach(b => b.disabled = true);
         note.textContent = actionName === 'open' ? 'Reading this session’s model choices…' : 'Waiting for the CLI…';
         try {
-            const response = await fetch('/api/session-model', { method: 'POST', signal: AbortSignal.timeout(20000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target, action: actionName, fingerprint: menu?.fingerprint || '', ...extra }) });
+            const response = await targetFetch('/api/session-model', { method: 'POST', signal: AbortSignal.timeout(20000), headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ target, action: actionName, fingerprint: menu?.fingerprint || '', ...extra }) });
             const data = await response.json();
             if (!data.success) throw new Error(data.error || 'Could not change model settings.');
             target = data.target;
@@ -82,7 +82,7 @@
         } finally {
             busy = false;
             overlay.querySelectorAll('button').forEach(b => b.disabled = failed && b !== cancel && b !== reload);
-            if (menu?.agent === 'codex' && menu.stage === 'model') apply.disabled = true;
+            if (['codex', 'hermes'].includes(menu?.agent) && menu.stage !== 'effort') apply.disabled = true;
             if (isOpen() && !overlay.contains(document.activeElement)) overlay.querySelector('.sm-dialog').focus();
         }
     }
@@ -91,8 +91,9 @@
         cancel.textContent = 'CANCEL';
         if (!menu) return;
         const eunice = menu.agent === 'eunice';
+        const hermes = menu.agent === 'hermes';
         const efforts = menu.stage === 'effort';
-        label(efforts ? menu.title.toUpperCase() : 'MODEL');
+        label(hermes && menu.stage === 'provider' ? 'PROVIDER' : (efforts ? menu.title.toUpperCase() : 'MODEL'));
         if (eunice) {
             const filter = document.createElement('input');
             filter.className = 'rename-input sm-filter'; filter.placeholder = 'Filter models…'; filter.value = query;
@@ -111,8 +112,8 @@
             options.append(row);
         });
         body.append(options);
-        if (menu.agent === 'codex') {
-            note.textContent = efforts ? 'Choose an effort, then Apply. Your conversation stays open.' : 'Choose a model to see its supported effort levels.';
+        if (menu.agent === 'codex' || hermes) {
+            note.textContent = efforts ? 'Choose an effort, then Apply. Your conversation stays open.' : (hermes && menu.stage === 'provider' ? 'Choose a provider to see its models.' : (hermes ? 'Choose a model to continue. Models without reasoning controls apply immediately.' : 'Choose a model to see its supported effort levels.'));
             if (efforts) body.append(button('← BACK', () => action('back')));
         } else {
             label('EFFORT');
@@ -128,10 +129,10 @@
                 controls.append(lower, value, higher);
             } else { controls.textContent = 'This model has no adjustable effort.'; controls.classList.add('sm-description'); }
             body.append(controls);
-            note.textContent = menu.agent === 'claude' && !menu.session_only ? 'This CLI version also saves the selection as its default.' : 'Applies to this session. Your conversation stays open.';
+            note.textContent = hermes && menu.stage === 'provider' ? 'Choose a provider to see its models.' : (menu.agent === 'claude' && !menu.session_only ? 'This CLI version also saves the selection as its default.' : 'Applies to this session. Your conversation stays open.');
         }
         apply.hidden = false;
-        apply.disabled = menu.agent === 'codex' && !efforts;
+        apply.disabled = ['codex', 'hermes'].includes(menu.agent) && !efforts;
     }
     agentIndicator.addEventListener('click', () => {
         if (isOpen()) return;

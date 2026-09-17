@@ -52,6 +52,7 @@ let modalWindows = [];
 // are hidden by default; the ☰ MENU toggle reveals them.
 const SHOW_MASTER_KEY = 'tmux-show-master';
 let allWindows = [];
+let pendingWindowSelection = '';
 let showMaster = localStorage.getItem(SHOW_MASTER_KEY) === 'true';
 
 // Command history
@@ -218,7 +219,7 @@ const CODEX_WORKING_LINE = /^\s*(?:•\s*)?Working\s+\(([^)]*\b\d+s\b[^)]*)\)(?:
    even if a spinner line lingers above. Claude Code prints the same
    shortcuts hint, so the "model · effort" tail is what makes it AGY.
    Background tasks in the footer are not the agent working. */
-const AGY_FOOTER = /^\s*(\? for shortcuts|esc to cancel)\s{2,}\S.*·\s*(?:high|medium|low)\b/;
+const AGY_FOOTER = /^\s*(\? for shortcuts|esc to cancel)\s{2,}\S/;
 const AGY_SPINNER = /^\s*[\u2800-\u28FF]\s+(\S.*?)\.\.\.\s*$/;
 
 /* EUNICE prints "✻ Thinking…" once when a turn starts and never redraws
@@ -227,6 +228,9 @@ const AGY_SPINNER = /^\s*[\u2800-\u28FF]\s+(\S.*?)\.\.\.\s*$/;
    something else already identifies as EUNICE. */
 const EUNICE_THINKING = /^\s*[✻✶✺✹✷]\s*Thinking…\s*$/;
 const EUNICE_TOOL = /^\s*→ [A-Za-z_][\w-]*\s*$/;
+const HERMES_SPINNER = /⌐■-■\s+([A-Za-z_][\w -]*?)\.\.\./;
+const HERMES_ELAPSED = /⏱\s*(\d+s)/;
+const HERMES_TOOL = /calling tool:\s*([A-Za-z_][\w-]*)/;
 
 function isEuniceFooter(line) {
     return line.includes('↵ send') && line.includes('esc clear');
@@ -265,6 +269,30 @@ function parseEuniceWorking(lines, tail) {
     return { verb: 'Thinking', meta: '' };
 }
 
+function isHermesStatus(line) {
+    const rest = line.trimStart().match(/^☤\s+(.+)$/)?.[1].trimStart();
+    return !!rest && !rest.startsWith('❯');
+}
+
+function parseHermesWorking(tail) {
+    let busy = -1;
+    for (let i = tail.length - 1; i >= 0; i--) {
+        if (tail[i].includes('msg=interrupt') && tail[i].includes('/queue') && tail[i].includes('Ctrl+C cancel')) { busy = i; break; }
+    }
+    if (busy < 0 || tail.slice(busy + 1).some(isHermesStatus)) return null;
+    let verb = '', meta = '';
+    for (let i = busy; i >= 0; i--) {
+        const spin = tail[i].match(HERMES_SPINNER);
+        const tool = tail[i].match(HERMES_TOOL);
+        const elapsed = tail[i].match(HERMES_ELAPSED);
+        if (!verb && spin) verb = spin[1].trim().replace(/^./, c => c.toUpperCase());
+        else if (!verb && tool) verb = `Tool: ${tool[1]}`;
+        if (!meta && elapsed) meta = elapsed[1];
+        if (verb && meta) break;
+    }
+    return { verb: verb || 'Working', meta };
+}
+
 function parseCodexWorking(line) {
     const match = line.match(CODEX_WORKING_LINE);
     if (!match) return null;
@@ -290,6 +318,8 @@ function parseWorking(content) {
     if (agy) return agy;
     const eunice = parseEuniceWorking(lines, tail);
     if (eunice) return eunice;
+    const hermes = parseHermesWorking(tail);
+    if (hermes) return hermes;
     for (let i = tail.length - 1; i >= 0; i--) {
         const codex = parseCodexWorking(tail[i]);
         if (codex) return codex;
@@ -311,7 +341,7 @@ function updateWorking(content) {
     return working;
 }
 
-const AGENT_BADGES = { claude: 'CLAUDE', codex: 'CODEX', agy: 'AGY', eunice: 'EUNICE' };
+const AGENT_BADGES = { claude: 'CLAUDE', codex: 'CODEX', agy: 'AGY', eunice: 'EUNICE', hermes: 'HERMES' };
 function updateAgentIndicator(agent) {
     const label = AGENT_BADGES[agent];
     agentIndicator.hidden = !label;
@@ -329,7 +359,7 @@ function setText(element, text) {
 const capturePoller = new AdaptivePoller(async (signal, current) => {
     const target = sessionSelect.value;
     if (!target || !current()) return false;
-    const response = await fetch('/api/capture', {
+    const response = await targetFetch('/api/capture', {
         method: 'POST', signal,
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ target, history_lines: historyLines }),
@@ -355,6 +385,7 @@ const capturePoller = new AdaptivePoller(async (signal, current) => {
     updateHistoryButton();
     if (!hasSelectionInOutput()) {
         terminalRenderer.render(displayContent, isFirstCapture);
+        outputContent.dataset.host = windowInfo(target).host;
         isFirstCapture = false;
     }
     return changed || !!working || !!data.picker;
@@ -428,7 +459,7 @@ async function openQuestions() {
     openingQuestions = true;
     questionsBtn.disabled = true;
     try {
-        const response = await fetch('/api/picker/open', {
+        const response = await targetFetch('/api/picker/open', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ target, fingerprint: questionQueue.fingerprint }),
         });
@@ -453,7 +484,7 @@ questionsBtn.addEventListener('click', openQuestions);
 async function closeQuestions() {
     const target = sessionSelect.value;
     try {
-        const response = await fetch('/api/picker/close', {
+        const response = await targetFetch('/api/picker/close', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ target }),
         });
@@ -786,7 +817,7 @@ async function sendPickerText() {
     showTextMode(target, false);
     let result;
     try {
-        const response = await fetch('/api/picker/text', {
+        const response = await targetFetch('/api/picker/text', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },
             // An already-entered native draft needs only a submit key. Never
             // type it again when retrying or recovering after a page reload.
@@ -899,7 +930,7 @@ async function stepPicker(delta, repeat) {
     const times = repeat || 1;
     try {
         for (let i = 0; i < times; i++) {
-            const res = await fetch('/api/picker/step', {
+            const res = await targetFetch('/api/picker/step', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ target, delta: delta > 0 ? 1 : -1, fingerprint }),
@@ -954,7 +985,7 @@ async function commitPickerInner() {
     const fingerprint = pickerData.fingerprint;
 
     try {
-        const res = await fetch('/api/picker/select', {
+        const res = await targetFetch('/api/picker/select', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ target, index, fingerprint }),
@@ -1083,18 +1114,29 @@ function shortElapsed(meta) {
     return `${m[3]}s`;
 }
 
-const statusPoller = new AdaptivePoller(async (signal, current) => {
-    const res = await fetch('/api/window-status', { signal });
-    if (!res.ok) throw new Error(`Status failed: ${res.status}`);
-    const rows = await res.json();
-    if (!current()) return false;
+function mergeHostStatuses() {
+    const rows = [...hostStatuses.entries()].flatMap(([host, rows]) => rows.map(row => {
+        const win = allWindows.find(w => w.host === host && w.nativeTarget === row.target);
+        return { ...row, target: win?.target || (host === defaultHost ? row.target : `${host}::${row.target}`) };
+    }));
     pendingTargets = rows.filter(r => r.waiting).map(r => r.target);
-    busyTargets = new Map(
-        rows.filter(r => !r.waiting && r.verb)
-            .map(r => [r.target, shortElapsed(r.meta)])
-    );
+    busyTargets = new Map(rows.filter(r => !r.waiting && r.verb).map(r => [r.target, shortElapsed(r.meta)]));
     paintWindowStatus();
-    return rows.length > 0;
+}
+
+const statusPoller = new HostPoller(async (host, signal, current) => {
+    try {
+        const res = await hostFetch('/api/window-status', { signal }, host);
+        if (!res.ok) throw new Error(`Status failed: ${res.status}`);
+        const rows = await res.json();
+        if (!current()) return false;
+        hostStatuses.set(host, rows);
+        mergeHostStatuses();
+        return rows.length > 0;
+    } catch (error) {
+        if (current()) { hostStatuses.delete(host); mergeHostStatuses(); }
+        throw error;
+    }
 }, { active: 3000, idle: 15000 });
 
 function refreshWindowStatus() {
@@ -1213,7 +1255,9 @@ function visibleWindows(keepTarget) {
 }
 
 function renderWindowOptions() {
-    const savedTarget = localStorage.getItem('tmux-selected-target');
+    let savedTarget = localStorage.getItem('tmux-selected-target');
+    const migrated = allWindows.find(w => w.host === defaultHost && w.nativeTarget === savedTarget);
+    if (migrated) { savedTarget = migrated.target; localStorage.setItem('tmux-selected-target', savedTarget); }
     // Visibility must prefer the live DOM selection over localStorage:
     // the currently-viewed target may not be persisted yet (e.g. the
     // fresh-load default selection), so falling back to savedTarget
@@ -1232,8 +1276,7 @@ function renderWindowOptions() {
 
     if (windows.length === 0) {
         sessionSelect.innerHTML = '<option value="">No windows found</option>';
-        startCapture();
-        return;
+        if (!savedTarget) { startCapture(); return; }
     }
 
     let foundSaved = false;
@@ -1243,7 +1286,8 @@ function renderWindowOptions() {
         option.value = win.target;
         // Kept apart from textContent so markPendingInDropdown can
         // rebuild the label without ever parsing its own markers back.
-        option.dataset.baseLabel = `${win.target} - ${win.name}`;
+        option.dataset.baseLabel = windowLabel(win) + (hostOffline.has(win.host) ? ' · OFFLINE' : '');
+        option.dataset.windowName = win.name;
         option.textContent = option.dataset.baseLabel;
         // Select saved target if it exists, otherwise keep whatever is
         // currently being viewed selected (it may never have been
@@ -1262,8 +1306,17 @@ function renderWindowOptions() {
 
     // If saved target wasn't found, select first and clear invalid saved value
     if (savedTarget && !foundSaved) {
-        sessionSelect.selectedIndex = 0;
-        localStorage.removeItem('tmux-selected-target');
+        const info = windowInfo(savedTarget);
+        if (savedTarget === pendingWindowSelection || !hostWindows.has(info.host) || hostOffline.has(info.host)) {
+            const option = document.createElement('option');
+            option.value = savedTarget;
+            option.textContent = `${hostLabel(info.host)} › ${info.session || ''} › ${hostOffline.has(info.host) ? 'OFFLINE' : 'Connecting…'}`;
+            option.selected = true;
+            sessionSelect.appendChild(option);
+        } else {
+            sessionSelect.selectedIndex = 0;
+            localStorage.removeItem('tmux-selected-target');
+        }
     }
 
     startCapture();
@@ -1272,32 +1325,38 @@ function renderWindowOptions() {
 }
 
 let windowsLoaded = false;
-const windowsPoller = new AdaptivePoller(async (signal, current) => {
+function mergeHostWindows() {
+    allWindows = hostRegistry.flatMap(h => hostWindows.get(h.id) || []);
+    renderWindowOptions();
+    mergeHostStatuses();
+}
+
+const windowsPoller = new HostPoller(async (host, signal, current) => {
     try {
-        const response = await fetch('/api/windows', { signal });
+        const response = await hostFetch('/api/windows', { signal }, host);
         if (!response.ok) throw new Error(`Windows failed: ${response.status}`);
-        const windows = await response.json();
-        if (!Array.isArray(windows)) throw new Error('Invalid window list');
+        const rows = await response.json();
+        if (!Array.isArray(rows)) throw new Error('Invalid window list');
         if (!current()) return false;
-        if (!windowsLoaded || JSON.stringify(windows) !== JSON.stringify(allWindows)) {
-            allWindows = windows;
-            renderWindowOptions();
+        const windows = rows.map(w => normalizeWindow(host, w));
+        const recovered = hostOffline.delete(host);
+        if (recovered || !hostWindows.has(host) || JSON.stringify(windows) !== JSON.stringify(hostWindows.get(host))) {
+            hostWindows.set(host, windows);
+            mergeHostWindows();
         }
         windowsLoaded = true;
         return windows.length === 0;
     } catch (error) {
         if (current()) {
-            showStatus('CONNECTION LOST — RETRYING', 'error');
-            if (!windowsLoaded) {
-                sessionSelect.innerHTML = '<option value="">Connecting… retrying</option>';
-            }
+            hostOffline.add(host);
+            mergeHostWindows();
         }
         throw error;
     }
 }, { active: 3000, idle: 30000 });
 
-async function loadWindows() {
-    await windowsPoller.request();
+async function loadWindows(host = windowInfo(sessionSelect.value).host) {
+    await windowsPoller.request(host);
     // Callers may have changed the saved selection without changing the list.
     if (windowsLoaded && localStorage.getItem('tmux-selected-target') !== sessionSelect.value) {
         renderWindowOptions();
@@ -1312,7 +1371,7 @@ async function sendCommand() {
     sendBtn.textContent = 'SENDING...';
 
     try {
-        const response = await fetch('/api/send', {
+        const response = await targetFetch('/api/send', {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json',
@@ -1399,7 +1458,7 @@ function openRenameModal() {
     }
     // Pre-fill with current window name
     const currentOption = sessionSelect.options[sessionSelect.selectedIndex];
-    const currentName = currentOption ? (currentOption.textContent.split(' - ')[1] || '') : '';
+    const currentName = currentOption?.dataset.windowName || '';
     renameInput.value = currentName;
     renameModal.classList.add('show');
     setTimeout(() => {
@@ -1418,7 +1477,7 @@ async function renameCurrentWindow(newName) {
     if (!target || !newName.trim()) return;
 
     try {
-        const response = await fetch('/api/rename-window', {
+        const response = await targetFetch('/api/rename-window', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ target, name: newName.trim() }),
@@ -1451,7 +1510,7 @@ function openKillModal() {
     }
     // tmux tears down the whole session with its last window, which
     // would take this server's own tmux down with it.
-    if (allWindows.length <= 1) {
+    if (allWindows.filter(w => w.host === windowInfo(target).host).length <= 1) {
         showStatus('CANNOT KILL LAST WINDOW', 'error');
         return;
     }
@@ -1473,7 +1532,7 @@ async function killCurrentWindow() {
     if (!target) return;
 
     try {
-        const response = await fetch('/api/kill-window', {
+        const response = await targetFetch('/api/kill-window', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ target }),
@@ -1510,11 +1569,15 @@ let nwTypedValue = '';
 const NW_SUGGEST_COUNT = 3;
 
 async function loadProjectDirs() {
+    const host = nwHost;
     try {
-        const response = await fetch('/api/project-dirs');
+        const response = await hostFetch('/api/project-dirs', {}, host);
+        if (!response.ok) throw new Error('Projects unavailable');
         const data = await response.json();
+        if (host !== nwHost) return;
         projectDirs = Array.isArray(data.dirs) ? data.dirs : [];
     } catch (err) {
+        if (host !== nwHost) return;
         projectDirs = [];
     }
     renderNwSuggestions();
@@ -1553,7 +1616,7 @@ function computeNwSuggestions() {
         // renderWindowOptions() uses, rather than parsing them back out
         // of option labels — those carry busy/waiting markers.
         const keepTarget = sessionSelect.value || localStorage.getItem('tmux-selected-target');
-        const openNames = new Set(visibleWindows(keepTarget).map(win => win.name));
+        const openNames = new Set(visibleWindows(keepTarget).filter(win => win.host === nwHost && win.session === nwSession).map(win => win.name));
         return projectDirs
             .filter(d => !openNames.has(d.name))
             .slice(0, NW_SUGGEST_COUNT);
@@ -1635,8 +1698,7 @@ function renderWindowList() {
     windowList.innerHTML = modalWindows.map((win, i) => `
         <div class="window-item ${i === modalSelectedIndex ? 'selected' : ''} ${win.current ? 'current' : ''}"
              data-index="${i}">
-            <span class="window-target">${win.target}</span>
-            <span class="window-name">${win.name.split(' - ')[1] || ''}</span>
+            <span class="window-target">${escapeHtml(win.name)}</span>
             ${win.current ? '<span class="window-marker">(active)</span>' : ''}
         </div>
     `).join('');
@@ -1670,29 +1732,24 @@ async function reorderWindow(fromIdx, toIdx) {
     const toWin = modalWindows[toIdx];
     if (!fromWin || !toWin) return;
 
-    // Extract session name from target (e.g. "main:3" -> "main")
-    const session = fromWin.target.split(':')[0];
-    const fromWindowIndex = parseInt(fromWin.target.split(':')[1]);
-    const toWindowIndex = parseInt(toWin.target.split(':')[1]);
+    const from = windowInfo(fromWin.target), to = windowInfo(toWin.target);
+    if (from.host !== to.host || from.session !== to.session) {
+        showStatus('REORDER WITHIN THE SAME HOST AND SESSION', 'error');
+        return;
+    }
+    const session = from.session;
+    const fromWindowIndex = from.index, toWindowIndex = to.index;
 
     try {
-        const response = await fetch('/api/move-window', {
+        const response = await hostFetch('/api/move-window', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ session, from_index: fromWindowIndex, to_index: toWindowIndex }),
-        });
+        }, from.host);
         const data = await response.json();
         if (data.success) {
-            // Swap in local array and update targets
-            const tmpTarget = fromWin.target;
-            fromWin.target = toWin.target;
-            toWin.target = tmpTarget;
-            modalWindows[fromIdx] = toWin;
-            modalWindows[toIdx] = fromWin;
-            modalSelectedIndex = toIdx;
-            renderWindowList();
-            // Refresh the dropdown too
-            await loadWindows();
+            await loadWindows(from.host);
+            openWindowModal();
         } else {
             showStatus(data.error || 'MOVE FAILED', 'error');
         }
@@ -1907,10 +1964,15 @@ const NW_AGENTS = [
     { id: 'codex',  label: 'CODEX',  command: 'codex --yolo' },
     { id: 'agy',    label: 'AGY',    command: 'agy --dangerously-skip-permissions' },
     { id: 'eunice', label: 'EUNICE', command: 'eunice' },
+    { id: 'hermes', label: 'HERMES', command: 'hermes --yolo' },
 ];
 const NW_AGENT_KEY = 'tmux-new-window-agent';
 const NW_DEFAULT_SESSION = '0';
+const nwHostPick = document.getElementById('nwHostPick');
 const nwAgentPick = document.getElementById('nwAgentPick');
+let nwHost = defaultHost;
+const nwCapabilities = new Map();
+let nwSubmitting = false;
 const nwSessionPick = document.getElementById('nwSessionPick');
 const nwCommand = document.getElementById('nwCommand');
 // The agent is remembered; the session is not. MASTER holds the backend
@@ -1922,8 +1984,8 @@ let nwSession = NW_DEFAULT_SESSION;
 // Sessions come from the window list the page already polls: every
 // tmux session has at least one window, so no extra endpoint is needed.
 function nwSessions() {
-    const names = [...new Set(allWindows.map(w => w.target.split(':')[0]))];
-    if (names.length === 0) names.push(NW_DEFAULT_SESSION);
+    const names = [...new Set(allWindows.filter(w => w.host === nwHost).map(w => w.session))];
+    if (!names.includes(NW_DEFAULT_SESSION)) names.push(NW_DEFAULT_SESSION);
     names.sort((a, b) => (b === NW_DEFAULT_SESSION) - (a === NW_DEFAULT_SESSION));
     return names;
 }
@@ -1946,17 +2008,21 @@ function renderNwPick(container, label, items, selected, onPick) {
         btn.textContent = item.label;
         btn.setAttribute('role', 'radio');
         btn.setAttribute('aria-checked', String(item.id === selected));
+        btn.disabled = !!item.disabled;
+        if (item.disabled) btn.title = `Unavailable on ${hostLabel(nwHost)}`;
         // mousedown + preventDefault: a click would pull focus off the
         // name input, and the next keystrokes would go nowhere.
-        btn.addEventListener('mousedown', (e) => { e.preventDefault(); onPick(item.id); });
+        btn.addEventListener('mousedown', e => e.preventDefault());
+        btn.addEventListener('click', () => onPick(item.id));
         container.appendChild(btn);
     });
 }
 
 function renderNwPickers() {
+    renderNwPick(nwHostPick, 'HOST', hostRegistry.map(h => ({ id: h.id, label: hostLabel(h.id) })), nwHost, setNwHost);
     const sessions = nwSessions();
     if (!sessions.includes(nwSession)) nwSession = nwDefaultSession(sessions);
-    renderNwPick(nwAgentPick, 'AGENT', NW_AGENTS, nwAgent, setNwAgent);
+    renderNwPick(nwAgentPick, 'AGENT', NW_AGENTS.map(a => ({ ...a, disabled: nwCapabilities.has(nwHost) && !nwCapabilities.get(nwHost).includes(a.id) })), nwAgent, setNwAgent);
     if (nwAgent === 'eunice') {
         nwAgentPick.appendChild(nwModelButton());
     } else if (nwModelsOpen()) {
@@ -1964,8 +2030,8 @@ function renderNwPickers() {
     }
     renderNwPick(nwSessionPick, 'SESSION',
         sessions.map(s => ({ id: s, label: s })), nwSession,
-        (id) => { nwSession = id; renderNwPickers(); });
-    nwCommand.textContent = `${nwSession}:  $ ${nwCommandFor(nwAgent)}`;
+        (id) => { nwSession = id; renderNwPickers(); renderNwSuggestions(); });
+    nwCommand.textContent = `${hostLabel(nwHost)} › ${nwSession}:  $ ${nwCommandFor(nwAgent)}`;
 }
 
 // --- EUNICE model picker ---------------------------------------------
@@ -2016,6 +2082,7 @@ function filterNwModels(catalog, query) {
 }
 
 async function openNwModels() {
+    const host = nwHost;
     nwModels.hidden = false;
     nwModelFilter.value = '';
     nwModelActive = 0;
@@ -2025,11 +2092,13 @@ async function openNwModels() {
     setTimeout(() => nwModelFilter.focus(), 30);
     if (nwModelCatalog) return;
     try {
-        const response = await fetch('/api/eunice-models');
+        const response = await hostFetch('/api/eunice-models', {}, host);
         const data = await response.json();
+        if (host !== nwHost) return;
         if (data.success) nwModelCatalog = data.models;
         else nwModelError = data.error || 'COULD NOT LIST MODELS';
     } catch (err) {
+        if (host !== nwHost) return;
         nwModelError = 'CONNECTION ERROR';
     }
     if (nwModelsOpen()) renderNwModelList();
@@ -2097,7 +2166,7 @@ function moveNwModelActive(delta) {
 
 function pickNwModel(id) {
     nwModel = id || '';
-    localStorage.setItem(NW_MODEL_KEY, nwModel);
+    localStorage.setItem(`${NW_MODEL_KEY}:${nwHost}`, nwModel);
     closeNwModels();
 }
 
@@ -2107,14 +2176,41 @@ nwModelFilter.addEventListener('input', () => {
 });
 
 function setNwAgent(id) {
+    if (nwCapabilities.has(nwHost) && !nwCapabilities.get(nwHost).includes(id)) return;
     nwAgent = id;
-    localStorage.setItem(NW_AGENT_KEY, id);
+    localStorage.setItem(`${NW_AGENT_KEY}:${nwHost}`, id);
+    if (nwHost === defaultHost) localStorage.setItem(NW_AGENT_KEY, id);
     renderNwPickers();
 }
 
+async function setNwHost(id) {
+    nwHost = id;
+    nwAgent = localStorage.getItem(`${NW_AGENT_KEY}:${id}`) || localStorage.getItem(NW_AGENT_KEY) || 'codex';
+    nwSession = nwDefaultSession(nwSessions());
+    projectDirs = [];
+    nwModelCatalog = null;
+    nwModel = localStorage.getItem(`${NW_MODEL_KEY}:${id}`) || (id === defaultHost ? localStorage.getItem(NW_MODEL_KEY) : '') || '';
+    nwModels.hidden = true;
+    renderNwPickers();
+    renderNwSuggestions();
+    loadProjectDirs();
+    try {
+        const response = await hostFetch('/api/agents', {}, id);
+        const data = await response.json();
+        if (response.ok && Array.isArray(data.agents)) nwCapabilities.set(id, data.agents);
+        if (nwHost !== id) return;
+        if (nwCapabilities.has(id) && !nwCapabilities.get(id).includes(nwAgent)) {
+            nwAgent = nwCapabilities.get(id).includes('codex') ? 'codex' : nwCapabilities.get(id)[0] || 'codex';
+        }
+        renderNwPickers();
+    } catch (_) { /* Creation reports the host's connection error. */ }
+}
+
 function cycleNwAgent(delta) {
-    const i = NW_AGENTS.findIndex(a => a.id === nwAgent);
-    setNwAgent(NW_AGENTS[(i + delta + NW_AGENTS.length) % NW_AGENTS.length].id);
+    const agents = NW_AGENTS.filter(a => !nwCapabilities.has(nwHost) || nwCapabilities.get(nwHost).includes(a.id));
+    if (!agents.length) return;
+    const i = Math.max(0, agents.findIndex(a => a.id === nwAgent));
+    setNwAgent(agents[(i + delta + agents.length) % agents.length].id);
 }
 
 function cycleNwSession(delta) {
@@ -2125,6 +2221,7 @@ function cycleNwSession(delta) {
 }
 
 function createNewWindow() {
+    setNwHost(defaultHost);
     newWindowInput.value = '';
     nwTypedValue = '';
     nwActiveIndex = -1;
@@ -2135,10 +2232,8 @@ function createNewWindow() {
     // Render immediately from the previous fetch so the list is never
     // blank, then refresh — mtimes move while the page stays open.
     renderNwSuggestions();
-    loadProjectDirs();
-    // 50ms: the element is display:none until .show lands, and a synchronous
-    // focus would also be stolen by closeActionMenu()'s commandInput.focus().
-    setTimeout(() => { newWindowInput.focus(); }, 50);
+    // Keep focus inside the tap/click handler so iOS can open the keyboard.
+    newWindowInput.focus({ preventScroll: true });
 }
 
 function closeNewWindowModal() {
@@ -2149,6 +2244,9 @@ function closeNewWindowModal() {
 
 const NEW_WINDOW_NAME_RE = /^[A-Za-z0-9._-]+$/;
 async function submitNewWindow(name) {
+    if (nwSubmitting) return;
+    const host = nwHost, agent = nwAgent, session = nwSession, model = nwModel;
+    if (nwCapabilities.has(host) && !nwCapabilities.get(host).includes(agent)) { showStatus('AGENT UNAVAILABLE ON ' + host, 'error'); return; }
     name = (name || '').trim();
     if (!name || !NEW_WINDOW_NAME_RE.test(name) || name.startsWith('-') || name === '.' || name === '..') {
         showStatus('INVALID NAME', 'error');
@@ -2162,15 +2260,16 @@ async function submitNewWindow(name) {
         }, 50);
         return;
     }
+    nwSubmitting = true;
     try {
-        const response = await fetch('/api/new-window-named', {
+        const response = await hostFetch('/api/new-window-named', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
-                name, agent: nwAgent, session: nwSession,
-                model: nwAgent === 'eunice' && nwModel ? nwModel : undefined,
+                name, agent, session,
+                model: agent === 'eunice' && model ? model : undefined,
             }),
-        });
+        }, host);
         const data = await response.json();
         if (data.success && data.target) {
             // Select the new/switched window. Persist the target and blank the
@@ -2178,9 +2277,11 @@ async function submitNewWindow(name) {
             // keepTarget (= sessionSelect.value || savedTarget) falls through to
             // the new target. Otherwise a MASTER-named new window is filtered out
             // and the plain `sessionSelect.value = target` assignment no-ops.
-            localStorage.setItem('tmux-selected-target', data.target);
+            pendingWindowSelection = windowKey(host, data);
+            localStorage.setItem('tmux-selected-target', pendingWindowSelection);
             sessionSelect.value = '';
-            await loadWindows();
+            await loadWindows(host);
+            pendingWindowSelection = '';
             const agentLabel = (data.agent || nwAgent).toUpperCase();
             showStatus((data.existing ? 'SWITCHED TO ' : `NEW ${agentLabel} WINDOW: `) + name, 'success');
             setTimeout(() => focusCommandInput(), 150);
@@ -2189,7 +2290,7 @@ async function submitNewWindow(name) {
         }
     } catch (err) {
         showStatus('CONNECTION ERROR', 'error');
-    }
+    } finally { nwSubmitting = false; pendingWindowSelection = ''; }
 }
 
 function handlePrefixCommand(key) {
@@ -2246,7 +2347,7 @@ function handlePrefixCommand(key) {
 async function sendKeyToTmux(key) {
     const session = sessionSelect.value || '0';
     try {
-        const response = await fetch('/api/send-key', {
+        const response = await targetFetch('/api/send-key', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ key, session }),
@@ -2313,6 +2414,12 @@ function closeActionMenu() { actionMenuModal.classList.remove('show'); focusComm
 
 menuBtn.addEventListener('click', openActionMenu);
 document.getElementById('newWindowBtn').addEventListener('click', createNewWindow);
+document.getElementById('menuReconnect').addEventListener('click', () => {
+    closeActionMenu();
+    showStatus('RECONNECTING…', 'success');
+    pausePolling();
+    resumePolling();
+});
 actionMenuModal.addEventListener('click', (e) => {
     if (e.target === actionMenuModal) closeActionMenu();
 });
@@ -2495,13 +2602,13 @@ function syntaxHighlightJson(json) {
     );
 }
 
-async function openFileModal(filePath) {
+async function openFileModal(filePath, host = outputContent.dataset.host || windowInfo(sessionSelect.value).host) {
     fileModalPath.textContent = filePath;
     fileModalContent.textContent = 'Loading...';
     fileModal.classList.add('show');
 
     try {
-        const response = await fetch('/api/serve-file?path=' + encodeURIComponent(filePath));
+        const response = await hostFetch('/api/serve-file?path=' + encodeURIComponent(filePath), {}, host);
         if (!response.ok) {
             fileModalContent.textContent = 'Error: ' + (await response.text());
             return;
@@ -2551,9 +2658,9 @@ const imageModal = document.getElementById('imageModal');
 const imageModalImg = document.getElementById('imageModalImg');
 const imageModalPath = document.getElementById('imageModalPath');
 
-function openImageModal(imagePath) {
+function openImageModal(imagePath, host = outputContent.dataset.host || windowInfo(sessionSelect.value).host) {
     imageModalPath.textContent = imagePath;
-    imageModalImg.src = '/api/serve-image?path=' + encodeURIComponent(imagePath);
+    imageModalImg.src = '/api/serve-image?host=' + encodeURIComponent(host) + '&path=' + encodeURIComponent(imagePath);
     imageModal.classList.add('show');
 }
 
@@ -2585,15 +2692,19 @@ const uploadTargetEl = document.getElementById('uploadTarget');
 const uploadCloseBtn = document.getElementById('uploadClose');
 const uploadAddMoreBtn = document.getElementById('uploadAddMore');
 let uploadSeq = 0;
+let uploadPickerTarget = '';
+let uploadBatchTarget = '';
 
 function openUploadPicker() {
+    uploadPickerTarget = sessionSelect.value;
+    if (!uploadPickerTarget) { showStatus('CHOOSE A WINDOW', 'error'); return; }
     // Reset so picking the same file again still fires a change event
     fileInput.value = '';
     fileInput.click();
 }
 
 function openUploadModal() {
-    uploadTargetEl.textContent = '→ ' + (sessionSelect.value || '0');
+    uploadTargetEl.textContent = '→ ' + (allWindows.find(w => w.target === uploadBatchTarget) ? windowLabel(windowInfo(uploadBatchTarget)) : uploadBatchTarget);
     // Clear finished rows from earlier batches; keep any still uploading
     uploadList.querySelectorAll('.upload-item.done, .upload-item.error').forEach(el => el.remove());
     uploadModal.classList.add('show');
@@ -2608,11 +2719,12 @@ function insertPathIntoInput(path) {
     const cur = commandInput.value;
     const sep = (cur && !cur.endsWith(' ')) ? ' ' : '';
     // Shell-quote the path if it contains whitespace
-    const quoted = /\s/.test(path) ? `'${path.replace(/'/g, `'\\''`)}'` : path;
+    const quoted = /[^A-Za-z0-9_./-]/.test(path) ? `'${path.replace(/'/g, `'\\''`)}'` : path;
     commandInput.value = cur + sep + quoted + ' ';
 }
 
-function uploadOneFile(file) {
+function uploadOneFile(file, target) {
+    const destination = windowInfo(target);
     const item = document.createElement('div');
     item.className = 'upload-item uploading';
     item.id = 'upload-' + (++uploadSeq);
@@ -2630,16 +2742,15 @@ function uploadOneFile(file) {
     const pctEl = item.querySelector('.upload-pct');
     const fillEl = item.querySelector('.upload-bar-fill');
     const statusEl = item.querySelector('.upload-status');
-    const target = sessionSelect.value || '0';
-
     const xhr = new XMLHttpRequest();
-    xhr.open('POST', '/api/upload?target=' + encodeURIComponent(target) +
+    xhr.open('POST', '/api/upload?host=' + encodeURIComponent(destination.host) + '&target=' + encodeURIComponent(destination.window_id || destination.nativeTarget) +
                      '&name=' + encodeURIComponent(file.name));
 
     xhr.upload.addEventListener('progress', (e) => {
         if (e.lengthComputable) {
             const pct = Math.round((e.loaded / e.total) * 100);
             pctEl.textContent = pct + '%';
+            if (pct === 100) statusEl.textContent = 'SAVING ON ' + destination.host + '…';
             fillEl.style.width = pct + '%';
         }
     });
@@ -2652,8 +2763,8 @@ function uploadOneFile(file) {
             item.classList.add('done');
             pctEl.textContent = '100%';
             fillEl.style.width = '100%';
-            statusEl.textContent = '→ ' + data.path;
-            insertPathIntoInput(data.path);
+            statusEl.textContent = destination.host + ' → ' + data.path;
+            if (sessionSelect.value === target) insertPathIntoInput(data.path);
             showStatus('UPLOADED ' + (data.name || file.name), 'success');
         } else {
             item.classList.remove('uploading');
@@ -2681,8 +2792,10 @@ uploadModal.addEventListener('click', (e) => {
 fileInput.addEventListener('change', () => {
     const files = Array.from(fileInput.files || []);
     if (files.length === 0) return;
+    uploadBatchTarget = uploadPickerTarget || sessionSelect.value;
+    if (!uploadBatchTarget) return;
     openUploadModal();
-    files.forEach(uploadOneFile);
+    files.forEach(file => uploadOneFile(file, uploadBatchTarget));
 });
 
 // Pause all background work while hidden/offline, including BFCache pages.

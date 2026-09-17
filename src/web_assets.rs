@@ -36,7 +36,7 @@ pub fn prepare(root: &Path) -> io::Result<String> {
     let mut html = fs::read_to_string(root.join("index.html"))?;
     let stylesheet = publish(root, "app.css", css.as_bytes())?;
     html = html.replace("\"/app.css\"", &format!("\"{stylesheet}\""));
-    for name in ["terminal.js", "app.js", "session-model.js"] {
+    for name in ["terminal.js", "hosts.js", "app.js", "session-model.js"] {
         let url = publish(root, name, &fs::read(root.join(name))?)?;
         html = html.replace(&format!("\"/{name}\""), &format!("\"{url}\""));
     }

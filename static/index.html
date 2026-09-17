@@ -121,6 +121,11 @@
         <div class="action-menu">
             <div class="modal-header">MENU</div>
             <div class="action-menu-list">
+                <button class="action-menu-item" id="menuReconnect">
+                    <span class="action-icon">&#x27F3;</span>
+                    <span class="action-label">Reconnect</span>
+                    <span class="action-shortcut">All hosts</span>
+                </button>
                 <button class="action-menu-item" id="menuHistory">
                     <span class="action-icon">&#x2191;</span>
                     <span class="action-label">Command History</span>
@@ -209,6 +214,7 @@
     <div class="modal-overlay" id="newWindowModal">
         <div class="rename-modal new-window-modal">
             <div class="modal-header">New Window <span style="font-weight:400;font-size:0.65rem;color:var(--matrix-dim)">^B c</span></div>
+            <div class="nw-pick" id="nwHostPick" role="radiogroup" aria-label="Host"></div>
             <div class="nw-pick" id="nwAgentPick" role="radiogroup" aria-label="Agent"></div>
             <div class="nw-pick" id="nwSessionPick" role="radiogroup" aria-label="tmux session"></div>
             <div class="nw-models" id="nwModels" hidden>
@@ -251,6 +257,7 @@
 
     <script src="/terminal.js" defer></script>
 
+    <script src="/hosts.js" defer></script>
     <script src="/app.js" defer></script>
     <script src="/session-model.js" defer></script>
 </body>

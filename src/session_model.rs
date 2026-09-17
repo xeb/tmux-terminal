@@ -5,13 +5,8 @@ use serde::{Deserialize, Serialize};
 use std::{
     collections::hash_map::DefaultHasher,
     hash::{Hash, Hasher},
-    process::Command,
-    sync::OnceLock,
 };
-use tokio::{
-    sync::Mutex,
-    time::{sleep, Duration},
-};
+use tokio::time::{sleep, Duration};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
 pub struct Choice {
@@ -48,6 +43,9 @@ fn fingerprint(menu: &Menu) -> String {
 pub fn parse(pane: &str) -> Option<Menu> {
     let lines: Vec<&str> = pane.lines().collect();
     let last = lines.iter().rposition(|l| !l.trim().is_empty())?;
+    if let Some(menu) = parse_hermes_menu(&lines, last) {
+        return Some(menu);
+    }
     // Native menus must still own the bottom of the pane. Never act on an old
     // menu in scrollback after the CLI has returned to a composer or shell.
     let tail = lines[last.saturating_sub(3)..=last].join("\n");
@@ -77,16 +75,24 @@ pub fn parse(pane: &str) -> Option<Menu> {
             start,
             last,
         )
-    } else if tail.contains("Keyboard:")
-        && (bottom.starts_with("Keyboard:")
-            || (bottom.contains('·')
-                && ["low", "medium", "high"]
-                    .iter()
-                    .any(|e| bottom.ends_with(e))))
-    {
+    } else if tail.contains("Keyboard:") {
         let start = lines.iter().rposition(|l| l.trim() == "Switch Model")?;
         let end = lines.iter().rposition(|l| l.starts_with("Keyboard:"))?;
-        ("agy", "model", start, end)
+        if start < end
+            && last <= end + 2
+            && (lines[last].starts_with("  ")
+                || bottom.starts_with("Keyboard:")
+                || bottom.contains('·'))
+            && !bottom.starts_with('$')
+            && !bottom.starts_with('%')
+            && !bottom.starts_with('>')
+            && !bottom.starts_with('❯')
+            && !bottom.starts_with('›')
+        {
+            ("agy", "model", start, end)
+        } else {
+            return None;
+        }
     } else if tail.contains("↵ send") && bottom.ends_with("/model") {
         let start = lines
             .iter()
@@ -110,6 +116,12 @@ pub fn parse(pane: &str) -> Option<Menu> {
     let mut agy_rows = false;
     for (offset, line) in lines[start + 1..end].iter().enumerate() {
         if agent == "agy" {
+            let trimmed = line.trim();
+            if trimmed.starts_with("Search:")
+                || (!trimmed.is_empty() && trimmed.chars().all(|c| c == '─' || c == '-'))
+            {
+                continue;
+            }
             if line.trim_start().starts_with("Effort") {
                 adjustable = true;
                 if let (Some(dot), Some(labels)) = (
@@ -193,6 +205,137 @@ pub fn parse(pane: &str) -> Option<Menu> {
     Some(menu)
 }
 
+fn hermes_prompt_column(line: &str) -> Option<usize> {
+    let (profile, _) = line.split_once('❯')?;
+    if !profile
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || " _-.".contains(c))
+    {
+        return None;
+    }
+    Some(profile.chars().count() + 2)
+}
+
+fn parse_hermes_menu(lines: &[&str], last: usize) -> Option<Menu> {
+    let start = lines.iter().rposition(|line| {
+        let line = line.trim();
+        line.starts_with("╭─ ⚙ Model Picker — ") && line.ends_with('╮')
+    })?;
+    // Blank padding varies with pane height and filtering. Require the actual
+    // composer below the dialog, not a fixed number of screen rows.
+    let end = (start + 1..=last)
+        .rev()
+        .find(|&i| lines[i].trim().starts_with('╰'))?;
+    let suffix: Vec<_> = lines[end + 1..=last]
+        .iter()
+        .map(|l| l.trim())
+        .filter(|l| !l.is_empty())
+        .collect();
+    let rule = |line: &str| !line.is_empty() && line.chars().all(|c| c == '─');
+    if end <= start
+        || suffix.len() != 3
+        || !rule(suffix[0])
+        || hermes_prompt_column(suffix[1]).is_none()
+        || !rule(suffix[2])
+    {
+        return None;
+    }
+    let heading = lines[start].trim();
+    let stage = if heading.contains("Select Provider") {
+        "provider"
+    } else if heading.contains("Reasoning effort for ") {
+        "effort"
+    } else {
+        "model"
+    };
+    let mut options = Vec::new();
+    let mut cursor = None;
+    for line in &lines[start + 1..end] {
+        let Some(inner) = line
+            .trim()
+            .strip_prefix('│')
+            .and_then(|s| s.strip_suffix('│'))
+        else {
+            continue;
+        };
+        let selected = inner.trim_start().starts_with('❯');
+        let text = inner.trim().trim_start_matches('❯').trim();
+        if text.is_empty()
+            || text.starts_with("Current:")
+            || text.starts_with("Select a model")
+            || text.starts_with("Filter:")
+            || text.starts_with("Applies with the model switch")
+            || text == "Cancel"
+            || text == "← Back"
+        {
+            continue;
+        }
+        let current = text.ends_with("← current");
+        let text = text.trim_end_matches("← current").trim_end();
+        let eligible = if stage == "provider" {
+            text.contains(" model") || text.contains(" models")
+        } else if stage == "effort" {
+            [
+                "minimal",
+                "low",
+                "medium",
+                "high",
+                "xhigh",
+                "max",
+                "ultra",
+                "none (disable reasoning)",
+                "Keep current effort",
+            ]
+            .contains(&text)
+        } else {
+            !text.contains(char::is_whitespace)
+        };
+        if !eligible {
+            continue;
+        }
+        if selected {
+            cursor = Some(options.len());
+        }
+        options.push(Choice {
+            label: text.to_string(),
+            description: if current {
+                "current".into()
+            } else {
+                String::new()
+            },
+            id: text.split_whitespace().next().unwrap_or(text).to_string(),
+            efforts: vec![],
+        });
+    }
+    let effort_re =
+        regex::Regex::new(r"Reasoning effort:\s+(none|minimal|low|medium|high|xhigh|max|ultra)")
+            .ok()?;
+    let effort = lines[..start]
+        .iter()
+        .rev()
+        .find_map(|line| effort_re.captures(line).map(|caps| caps[1].to_string()));
+    let mut menu = Menu {
+        agent: "hermes".into(),
+        stage: stage.into(),
+        title: if stage == "provider" {
+            "Select provider".into()
+        } else {
+            heading.trim_matches(['╭', '─', '╮', ' ']).to_string()
+        },
+        options,
+        cursor: cursor?,
+        effort,
+        adjustable: false,
+        session_only: true,
+        fingerprint: String::new(),
+    };
+    if menu.options.is_empty() {
+        return None;
+    }
+    menu.fingerprint = fingerprint(&menu);
+    Some(menu)
+}
+
 struct Pane {
     target: String,
     command: String,
@@ -201,8 +344,8 @@ struct Pane {
     input: String,
     result: Option<serde_json::Value>,
 }
-fn snapshot(target: &str) -> Result<Pane, String> {
-    let info = Command::new("tmux").args(["display-message", "-p", "-t", target, "#{pane_id}\t#{pane_current_command}\t#{cursor_x}\t#{cursor_y}\t#{pane_in_mode}\t#{@eunice_model_settings}\t#{@eunice_model_result}"]).output().map_err(|e| e.to_string())?;
+async fn snapshot(target: &str) -> Result<Pane, String> {
+    let info = super::hosts::tmux().args(["display-message", "-p", "-t", target, "#{pane_id}\t#{pane_current_command}\t#{cursor_x}\t#{cursor_y}\t#{pane_in_mode}\t#{@eunice_model_settings}\t#{@eunice_model_result}"]).output().await.map_err(|e| e.to_string())?;
     if !info.status.success() {
         return Err("This window has closed.".into());
     }
@@ -211,9 +354,10 @@ fn snapshot(target: &str) -> Result<Pane, String> {
     if fields.len() != 7 || fields[4] != "0" {
         return Err("Leave tmux copy mode before changing models.".into());
     }
-    let out = Command::new("tmux")
+    let out = super::hosts::tmux()
         .args(["capture-pane", "-p", "-t", fields[0]])
         .output()
+        .await
         .map_err(|e| e.to_string())?;
     if !out.status.success() {
         return Err("Could not read this window.".into());
@@ -242,7 +386,22 @@ fn snapshot(target: &str) -> Result<Pane, String> {
 }
 
 fn ready(p: &Pane) -> Option<&'static str> {
-    if p.x > 2 || super::parse_working(&p.text).is_some() {
+    if super::parse_working(&p.text).is_some() {
+        return None;
+    }
+    if ["hermes", "python", "python3"].contains(&p.command.as_str())
+        && hermes_prompt_column(&p.input) == Some(p.x)
+        && p.text
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .rev()
+            .take(15)
+            .any(|line| super::is_hermes_status(line))
+        && parse(&p.text).is_none()
+    {
+        return Some("hermes");
+    }
+    if p.x > 2 {
         return None;
     }
     let line = p.input.as_str();
@@ -257,8 +416,8 @@ fn ready(p: &Pane) -> Option<&'static str> {
     }
 }
 
-fn key(target: &str, key: &str) -> Result<(), String> {
-    super::send_keys(target, &[key.into()])
+async fn key(target: &str, key: &str) -> Result<(), String> {
+    super::send_keys(target, &[key.into()]).await
 }
 fn owns_menu(p: &Pane, menu: &Menu) -> bool {
     match menu.agent.as_str() {
@@ -266,18 +425,22 @@ fn owns_menu(p: &Pane, menu: &Menu) -> bool {
         "codex" => ["codex", "node"].contains(&p.command.as_str()),
         "agy" => p.command == "agy",
         "eunice" => p.command == "eunice",
+        "hermes" => {
+            ["hermes", "python", "python3"].contains(&p.command.as_str())
+                && parse(&p.text).is_some_and(|m| m.agent == "hermes")
+        }
         _ => false,
     }
 }
 async fn command(target: &str, text: &str) -> Result<(), String> {
-    super::send_keys_literal(target, text)?;
+    super::send_keys_literal(target, text).await?;
     sleep(Duration::from_millis(100)).await;
-    key(target, "Enter")
+    key(target, "Enter").await
 }
 async fn changed(target: &str, before: &Menu) -> Result<Option<Menu>, String> {
     for _ in 0..40 {
         sleep(Duration::from_millis(50)).await;
-        let p = snapshot(target)?;
+        let p = snapshot(target).await?;
         match parse(&p.text) {
             Some(m) if m.fingerprint != before.fingerprint => return Ok(Some(m)),
             None if ready(&p).is_some() => return Ok(None),
@@ -285,6 +448,48 @@ async fn changed(target: &str, before: &Menu) -> Result<Option<Menu>, String> {
         }
     }
     Err("The CLI did not confirm the change. Check the terminal and reopen the picker.".into())
+}
+
+fn hermes_switch_confirmed(p: &Pane, menu: &Menu) -> bool {
+    if ready(p) != Some("hermes") {
+        return false;
+    }
+    let model = if menu.stage == "effort" {
+        menu.title
+            .split_once("Reasoning effort for ")
+            .map(|(_, model)| model)
+    } else {
+        menu.options
+            .get(menu.cursor)
+            .map(|choice| choice.id.as_str())
+    };
+    let Some(model) = model else {
+        return false;
+    };
+    let Some((_, confirmation)) = p.text.rsplit_once(&format!("✓ Model switched: {model}\n"))
+    else {
+        return false;
+    };
+    if confirmation.contains('✗') || confirmation.contains("cancelled") {
+        return false;
+    }
+    if menu.stage == "effort" && menu.options[menu.cursor].label != "Keep current effort" {
+        return confirmation.contains(&format!(
+            "Reasoning effort: {}",
+            menu.options[menu.cursor].id
+        ));
+    }
+    true
+}
+
+async fn confirm_hermes_switch(target: &str, menu: &Menu) -> Result<(), String> {
+    for _ in 0..200 {
+        sleep(Duration::from_millis(50)).await;
+        if hermes_switch_confirmed(&snapshot(target).await?, menu) {
+            return Ok(());
+        }
+    }
+    Err("Hermes has not confirmed the model and reasoning change. Check the terminal.".into())
 }
 
 #[derive(Deserialize)]
@@ -300,7 +505,7 @@ pub struct Request {
 }
 
 async fn perform(req: Request) -> Result<serde_json::Value, String> {
-    let p = snapshot(&req.target)?;
+    let p = snapshot(&req.target).await?;
     let target = p.target.clone();
     if req.action == "open" {
         if let Some(menu) = parse(&p.text) {
@@ -318,7 +523,7 @@ async fn perform(req: Request) -> Result<serde_json::Value, String> {
             return Err("This Eunice process predates live model switching. Start a window with the updated CLI to use the picker.".into());
         }
         if agent == "eunice" {
-            let cleared = Command::new("tmux")
+            let cleared = super::hosts::tmux()
                 .args([
                     "set-option",
                     "-p",
@@ -328,6 +533,7 @@ async fn perform(req: Request) -> Result<serde_json::Value, String> {
                     "",
                 ])
                 .status()
+                .await
                 .map_err(|e| e.to_string())?;
             if !cleared.success() {
                 return Err("Could not refresh Eunice settings.".into());
@@ -344,7 +550,7 @@ async fn perform(req: Request) -> Result<serde_json::Value, String> {
         .await?;
         for _ in 0..200 {
             sleep(Duration::from_millis(50)).await;
-            if let Some(menu) = parse(&snapshot(&target)?.text) {
+            if let Some(menu) = parse(&snapshot(&target).await?.text) {
                 if menu.agent == agent {
                     return Ok(serde_json::json!({"target": target, "menu": menu}));
                 }
@@ -394,7 +600,7 @@ async fn perform(req: Request) -> Result<serde_json::Value, String> {
         .await?;
         for _ in 0..200 {
             sleep(Duration::from_millis(50)).await;
-            let fresh = snapshot(&target)?;
+            let fresh = snapshot(&target).await?;
             if ready(&fresh) == Some("eunice") {
                 if let Some(result) = fresh.result.filter(|r| r["nonce"] == nonce) {
                     if result["success"] == true {
@@ -422,7 +628,7 @@ async fn perform(req: Request) -> Result<serde_json::Value, String> {
                     break;
                 }
                 let labels = menu.options.clone();
-                key(&target, if index > menu.cursor { "Down" } else { "Up" })?;
+                key(&target, if index > menu.cursor { "Down" } else { "Up" }).await?;
                 menu = changed(&target, &menu)
                     .await?
                     .ok_or("The menu closed while selecting. Nothing was applied.")?;
@@ -434,12 +640,16 @@ async fn perform(req: Request) -> Result<serde_json::Value, String> {
                 return Err("Could not select that option.".into());
             }
             // Codex enters its per-model effort screen without committing yet.
-            if menu.agent == "codex"
+            if (menu.agent == "codex"
                 && (menu.stage == "model"
-                    || menu.options[index].label.starts_with("More reasoning"))
+                    || menu.options[index].label.starts_with("More reasoning")))
+                || (menu.agent == "hermes" && ["provider", "model"].contains(&menu.stage.as_str()))
             {
-                key(&target, "Enter")?;
+                key(&target, "Enter").await?;
                 let next = changed(&target, &menu).await?;
+                if menu.agent == "hermes" && next.is_none() {
+                    confirm_hermes_switch(&target, &menu).await?;
+                }
                 return Ok(
                     serde_json::json!({"target": target, "menu": next, "closed": next.is_none(), "applied": next.is_none()}),
                 );
@@ -455,20 +665,21 @@ async fn perform(req: Request) -> Result<serde_json::Value, String> {
                 } else {
                     return Err("Invalid effort direction.".into());
                 },
-            )?;
+            )
+            .await?;
             // At an endpoint the native slider may stay put.
             sleep(Duration::from_millis(250)).await;
-            menu = parse(&snapshot(&target)?.text).ok_or("The model menu closed.")?;
+            menu = parse(&snapshot(&target).await?.text).ok_or("The model menu closed.")?;
         }
-        "back" if menu.agent == "codex" && menu.stage == "effort" => {
-            key(&target, "Escape")?;
+        "back" if ["codex", "hermes"].contains(&menu.agent.as_str()) && menu.stage == "effort" => {
+            key(&target, "Escape").await?;
             menu = changed(&target, &menu)
                 .await?
                 .ok_or("The model menu closed.")?;
         }
         "cancel" => {
             for _ in 0..4 {
-                key(&target, "Escape")?;
+                key(&target, "Escape").await?;
                 match changed(&target, &menu).await? {
                     Some(next) => menu = next,
                     None => return Ok(serde_json::json!({"target": target, "closed": true})),
@@ -477,6 +688,9 @@ async fn perform(req: Request) -> Result<serde_json::Value, String> {
             return Err("Close the remaining menu in the terminal.".into());
         }
         "apply" => {
+            if menu.agent == "hermes" && menu.stage != "effort" {
+                return Err("Choose a Hermes model and reasoning level first.".into());
+            }
             if menu.agent == "codex"
                 && (menu.stage != "effort"
                     || menu.options[menu.cursor]
@@ -492,8 +706,22 @@ async fn perform(req: Request) -> Result<serde_json::Value, String> {
                 } else {
                     "Enter"
                 },
-            )?;
-            if let Some(next) = changed(&target, &menu).await? {
+            )
+            .await?;
+            if menu.agent == "hermes" {
+                confirm_hermes_switch(&target, &menu).await?;
+                return Ok(serde_json::json!({"target": target, "closed": true, "applied": true}));
+            }
+            for _ in 0..40 {
+                sleep(Duration::from_millis(50)).await;
+                let p = snapshot(&target).await?;
+                if parse(&p.text).is_none() && ready(&p).is_some() {
+                    return Ok(
+                        serde_json::json!({"target": target, "closed": true, "applied": true}),
+                    );
+                }
+            }
+            if let Some(next) = parse(&snapshot(&target).await?.text) {
                 return Ok(serde_json::json!({"target": target, "menu": next}));
             }
             return Ok(serde_json::json!({"target": target, "closed": true, "applied": true}));
@@ -504,9 +732,16 @@ async fn perform(req: Request) -> Result<serde_json::Value, String> {
 }
 
 pub async fn handle(Json(req): Json<Request>) -> (StatusCode, Json<serde_json::Value>) {
-    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-    let _guard = LOCK.get_or_init(|| Mutex::new(())).lock().await;
-    match perform(req).await {
+    let (target, _guard) = match super::lock_pane_action(&req.target).await {
+        Ok(locked) => locked,
+        Err(error) => {
+            return (
+                StatusCode::CONFLICT,
+                Json(serde_json::json!({"success":false,"error":error})),
+            )
+        }
+    };
+    match perform(Request { target, ..req }).await {
         Ok(mut data) => {
             data["success"] = true.into();
             (StatusCode::OK, Json(data))
@@ -547,6 +782,20 @@ mod tests {
             ),
             (
                 include_str!("../tests/fixtures/session_model/agy_fixed_effort.txt"),
+                "agy",
+                7,
+                4,
+                None,
+            ),
+            (
+                include_str!("../tests/fixtures/session_model/agy_1_2_pro.txt"),
+                "agy",
+                7,
+                0,
+                Some("high"),
+            ),
+            (
+                include_str!("../tests/fixtures/session_model/agy_1_2_fixed_effort.txt"),
                 "agy",
                 7,
                 4,
@@ -595,6 +844,153 @@ mod tests {
         }
     }
     #[test]
+    fn parses_live_hermes_provider_and_model_dialogs() {
+        let provider = "\
+  Reasoning effort:  medium
+╭─ ⚙ Model Picker — Select Provider ───╮
+│ Current: z-ai/glm-5.3-flash on OpenRouter │
+│   Mixture of Agents (1 model)              │
+│ ❯ OpenRouter (50 models)  ← current       │
+│   Anthropic (13 models)                    │
+│   Cancel                                   │
+╰─────────────────────────────────────────────╯
+────────
+❯ Ask anything
+────────
+";
+        let menu = parse(provider).expect("Hermes provider menu");
+        assert_eq!(
+            (
+                menu.agent.as_str(),
+                menu.stage.as_str(),
+                menu.options.len(),
+                menu.cursor
+            ),
+            ("hermes", "provider", 3, 1)
+        );
+        assert_eq!(menu.effort.as_deref(), Some("medium"));
+
+        let models = provider.replace(
+            "Select Provider",
+            "OpenRouter",
+        ).replace(
+            "\u{2502} Current: z-ai/glm-5.3-flash on OpenRouter \u{2502}\n\u{2502}   Mixture of Agents (1 model)              \u{2502}\n\u{2502} ❯ OpenRouter (50 models)  ← current       \u{2502}\n\u{2502}   Anthropic (13 models)                    \u{2502}",
+            "\u{2502} Select a model (2 available) — type to filter \u{2502}\n\u{2502} ❯ z-ai/glm-5.3-flash                         \u{2502}\n\u{2502}   anthropic/claude-sonnet-5                 \u{2502}\n\u{2502}   ← Back                                    \u{2502}",
+        );
+        let menu = parse(&models).expect("Hermes model menu");
+        assert_eq!(
+            (menu.stage.as_str(), menu.options.len(), menu.cursor),
+            ("model", 2, 0)
+        );
+        assert!(!menu.adjustable);
+    }
+
+    #[test]
+    fn rejects_a_stale_hermes_dialog() {
+        let pane = "╭─ ⚙ Model Picker — Select Provider ─╮\n│ ❯ OpenRouter (50 models) │\n╰──╯\n❯ Ask anything\n───\nordinary output\n$ ";
+        assert!(parse(pane).is_none());
+    }
+    #[test]
+    fn hermes_requires_model_and_effort_confirmation() {
+        let mut menu = parse(include_str!(
+            "../tests/fixtures/session_model/hermes_effort.txt"
+        ))
+        .unwrap();
+        menu.cursor = 3;
+        let mut p = Pane { target: "%0".into(), command: "python".into(), x: 7,
+            input: "test ❯ Ask anything".into(), result: None,
+            text: "✓ Model switched: z-ai/glm-5.3-flash\nReasoning effort: high\n ☤ glm-5.3-flash │ ctx --\ntest ❯ Ask anything\n".into() };
+        assert!(hermes_switch_confirmed(&p, &menu));
+        p.text = p.text.replace("effort: high", "effort: medium");
+        assert!(!hermes_switch_confirmed(&p, &menu));
+        p.text = p
+            .text
+            .replace("effort: medium", "effort: high\nModel switch cancelled.");
+        assert!(!hermes_switch_confirmed(&p, &menu));
+        p.text = " ☤ glm-5.3-flash │ ctx --\ntest ❯ Ask anything\n".into();
+        assert!(!hermes_switch_confirmed(&p, &menu));
+    }
+    #[test]
+    fn parses_captured_hermes_stages_with_padding_and_profile_prompt() {
+        for (text, stage, count, cursor) in [
+            (
+                include_str!("../tests/fixtures/session_model/hermes_provider.txt"),
+                "provider",
+                8,
+                1,
+            ),
+            (
+                include_str!("../tests/fixtures/session_model/hermes_model.txt"),
+                "model",
+                1,
+                0,
+            ),
+            (
+                include_str!("../tests/fixtures/session_model/hermes_effort.txt"),
+                "effort",
+                9,
+                0,
+            ),
+        ] {
+            let menu = parse(text).expect(stage);
+            assert_eq!(
+                (
+                    menu.agent.as_str(),
+                    menu.stage.as_str(),
+                    menu.options.len(),
+                    menu.cursor
+                ),
+                ("hermes", stage, count, cursor)
+            );
+            assert!(parse(&format!("{text}\n$ ")).is_none());
+            assert!(parse(&text.replace(
+                "test ❯ Plan a feature, then build it step by step",
+                "unrelated output"
+            ))
+            .is_none());
+            let mut p = Pane {
+                target: "%0".into(),
+                command: "python".into(),
+                x: 7,
+                text: text.into(),
+                input: "test ❯ Plan a feature, then build it step by step".into(),
+                result: None,
+            };
+            assert!(owns_menu(&p, &menu));
+            assert_eq!(ready(&p), None);
+            p.command = "bash".into();
+            assert!(!owns_menu(&p, &menu));
+            if stage == "effort" {
+                assert_eq!(menu.options[2].label, "medium");
+                assert_eq!(menu.options[2].description, "current");
+                assert_eq!(menu.options[7].id, "none");
+            }
+        }
+    }
+    #[test]
+    fn hermes_is_ready_after_context_usage_replaces_ctx_placeholder() {
+        let idle = include_str!("../tests/fixtures/hermes/idle_after_turn.txt");
+        assert!(!idle.contains("ctx "));
+        let input = idle.lines().find(|line| line.starts_with('❯')).unwrap();
+        let mut p = Pane {
+            target: "%14".into(), command: "python".into(), x: 2,
+            text: idle.into(), input: input.into(), result: None,
+        };
+        assert_eq!(ready(&p), Some("hermes"));
+        let busy = "☤ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel\n";
+        p.text = format!("{busy}{idle}");
+        assert_eq!(ready(&p), Some("hermes"), "stale busy footer must not block an idle picker");
+        p.text = format!("{idle}{busy}");
+        assert_eq!(ready(&p), None, "live busy footer must still block the picker");
+        p.text = idle.into();
+        p.x = 3;
+        assert_eq!(ready(&p), None, "typed input remains protected");
+        p.x = 2;
+        p.command = "bash".into();
+        assert_eq!(ready(&p), None);
+    }
+
+    #[test]
     fn refuses_busy_or_nonempty_composers() {
         let mut p = Pane {
             target: "%1".into(),
@@ -613,6 +1009,22 @@ mod tests {
         assert_eq!(ready(&p), None);
         p.text = "❯\n".into();
         p.command = "bash".into();
+        assert_eq!(ready(&p), None);
+
+        p.command = "python".into();
+        p.x = 2;
+        p.input = "❯ Ask anything".into();
+        p.text = " ☤ glm-5.3-flash │ ctx --\n❯ Ask anything\n".into();
+        assert_eq!(ready(&p), Some("hermes"));
+        p.text.push_str(&"\n".repeat(50));
+        assert_eq!(ready(&p), Some("hermes"));
+        p.input = "test ❯ Plan a feature, then build it step by step".into();
+        p.x = 7;
+        assert_eq!(ready(&p), Some("hermes"));
+        p.x = 8;
+        assert_eq!(ready(&p), None);
+        p.x = 7;
+        p.text = "ordinary Python output".into();
         assert_eq!(ready(&p), None);
     }
 }

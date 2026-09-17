@@ -1,7 +1,7 @@
 # Mobile rendering and polling
 
 The website remains vanilla JavaScript/CSS with no frontend build step. Source
-files are `static/index.html`, `static/app.js`, `static/terminal.js`,
+files are `static/index.html`, `static/app.js`, `static/hosts.js`, `static/terminal.js`,
 `static/app.css`, and `static/session-model.js`.
 
 At startup, `src/web_assets.rs` publishes content-hashed copies of scripts,
@@ -24,9 +24,17 @@ The web client requests 200 scrollback lines, loading 200 more when scrolling
 near the top or pressing Load older output, up to the original 1000-line limit.
 Clients omitting `history_lines` retain the original limit. Captures include
 plain and styled text from one snapshot, and exact `has_more` metadata from the
-same tmux invocation. Parsing/linkification is cached per line and incoming ANSI
+same tmux invocation. That invocation also reads the foreground process for the
+agent badge, so a Codex transcript quoting Hermes output cannot relabel the
+window. Interpreter names such as Python/Node still require matching UI evidence.
+Parsing/linkification is cached per line and incoming ANSI
 state; unchanged DOM rows survive updates. Scroll anchoring retains the visible
 row during history prepends, and text selection defers terminal changes.
+
+The web renderer converts ANSI colors to grayscale. White, cream, and light-gray
+foregrounds display as black for the light page theme; dark highlights behind
+those runs are lightened to retain contrast. This happens after reverse-video
+resolution and leaves tmux colors and captured ANSI state unchanged.
 
 The layout follows `VisualViewport.height/offsetTop` for iOS keyboards, with
 dynamic viewport units as a fallback and safe-area padding. Compact controls

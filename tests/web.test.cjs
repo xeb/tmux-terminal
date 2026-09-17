@@ -4,6 +4,41 @@ const fs = require('node:fs');
 const vm = require('node:vm');
 const flush = () => new Promise(resolve => setImmediate(resolve));
 
+test('Hermes token-count footer clears stale working status after a turn', () => {
+    const source = fs.readFileSync('static/app.js', 'utf8');
+    const context = vm.createContext({});
+    vm.runInContext(source.slice(source.indexOf('const HERMES_SPINNER'), source.indexOf('function isEuniceFooter')) +
+        source.slice(source.indexOf('function isHermesStatus'), source.indexOf('function parseCodexWorking')), context);
+    const idle = fs.readFileSync('tests/fixtures/hermes/idle_after_turn.txt', 'utf8').trimEnd().split('\n');
+    const busy = ['( •_•)>⌐■-■ mulling... ⏱ 4s', '☤ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel'];
+    assert.equal(context.parseHermesWorking(idle), null);
+    assert.equal(context.parseHermesWorking([...busy, ...idle]), null);
+    assert.equal(context.parseHermesWorking([...idle, ...busy]).verb, 'Mulling');
+    assert.equal(context.isHermesStatus(busy[1]), false);
+    assert.equal(context.isHermesStatus('╭─ ☤ Hermes ───╮'), false);
+});
+
+test('white and cream ANSI foregrounds render black without changing terminal state', () => {
+    const context = vm.createContext({});
+    vm.runInContext(fs.readFileSync('static/terminal.js', 'utf8') +
+        '\nglobalThis.render = renderTerminalOutput; globalThis.state = freshAnsiState();', context);
+    for (const sgr of ['37', '97', '38;5;7', '38;5;15', '38;5;231', '38;5;230', '38;5;250', '38;2;255;255;255', '38;2;248;248;240']) {
+        assert.match(context.render(`\x1b[${sgr}mtext`), /color:#000[;"]/);
+    }
+    // The house status bar and reverse-video selections must not become
+    // black-on-black when their white foreground is remapped.
+    assert.match(context.render('\x1b[38;5;250;48;5;234mstatus'), /color:#000;background-color:rgb\(227,227,227\)/);
+    assert.match(context.render('\x1b[40mdefault'), /color:#000;background-color:rgb\(238,238,238\)/);
+    assert.match(context.render('\x1b[7mreverse'), /color:#000;background-color:var\(--terminal-bg\)/);
+    assert.match(context.render('\x1b[30;107;7mreverse'), /color:#000;background-color:rgb\(238,238,238\)/);
+    assert.match(context.render('\x1b[30;107mlight background'), /color:rgb\(17,17,17\);background-color:rgb\(255,255,255\)/);
+    assert.match(context.render('\x1b[38;5;240mgray'), /color:rgb\(88,88,88\)/);
+    assert.match(context.render('\x1b[97mfirst', context.state), /color:#000/);
+    assert.equal(context.state.fg, 'rgb(255,255,255)');
+    assert.match(context.render('next line', context.state), /color:#000/);
+    assert.equal(context.render('\x1b[0mreset', context.state), 'reset');
+});
+
 function harness() {
     let now = 0, id = 0;
     const timers = new Map();

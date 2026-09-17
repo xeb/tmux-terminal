@@ -125,6 +125,23 @@ function ansiStyle(state) {
         const match = bg.match(/^rgb\((\d+),(\d+),(\d+)\)$/);
         if (match) fg = Number(match[1]) < 128 ? '#fff' : '#111';
     }
+    // ANSI white includes normal white (palette 7), bright white, and the
+    // cream/near-white colors and light-gray status text used by Hermes.
+    // Resolve reverse video first so only the displayed foreground changes,
+    // never the captured ANSI state.
+    const foreground = fg?.match(/^rgb\((\d+),(\d+),(\d+)\)$/);
+    if (fg === '#fff' || fg === 'var(--terminal-bg)'
+            || (foreground && Number(foreground[1]) >= 188)) {
+        fg = '#000';
+        // Keep formerly white-on-dark highlights legible as black-on-light.
+        const background = bg?.match(/^rgb\((\d+),(\d+),(\d+)\)$/);
+        if (background && Number(background[1]) < 128) {
+            const shade = 255 - Number(background[1]);
+            bg = `rgb(${shade},${shade},${shade})`;
+        } else if (bg === 'var(--matrix-dim)') {
+            bg = 'var(--terminal-bg)';
+        }
+    }
     const css = [];
     if (fg) css.push(`color:${fg}`);
     if (bg) css.push(`background-color:${bg}`);

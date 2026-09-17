@@ -22,6 +22,7 @@ path = root / 'state.json'
 s = json.loads(path.read_text())
 a = sys.argv[1:]
 def pane():
+    if 'capture_text' in s: return s['capture_text']
     if s['mode'] == 'queued': return (root / 'queued.txt').read_text()
     if s['mode'] == 'done': return '› Ask Codex to do anything\n  gpt-6-astra xhigh\n'
     if s.get('text_only'):
@@ -33,7 +34,7 @@ def pane():
 if a[0] == 'display-message':
     if a[-1] == '#{pane_id}': print('%1')
     elif ';' in a:
-        print('1200')
+        print('1200\t' + s.get('foreground', 'codex'))
         print(pane(), end='')
     else: print('0')
 elif a[0] == 'list-windows': print('0:1\tTest' if '#{window_name}' in a[-1] else '0:1')
@@ -104,6 +105,20 @@ with tempfile.TemporaryDirectory(prefix='tmux-terminal-api-') as directory:
         assert headers['Cache-Control'] == 'no-store' and capture['has_more']
         assert capture['question_queue']['count'] == 2
         assert not request('/api/capture', {'target': '0:1'})[2]['has_more']
+
+        # A Codex conversation about Hermes must keep its Codex badge, including
+        # while its own footer is missing. Python and shells need stronger proof.
+        state = json.loads(state_file.read_text())
+        state['capture_text'] = 'Quoted Hermes UI:\n ☤ glm-5.3-flash │ ctx --\n❯ Ask anything\n'
+        for command, expected in [('codex', 'codex'), ('python', 'hermes'), ('bash', None), ('node', None)]:
+            state['foreground'] = command
+            state_file.write_text(json.dumps(state))
+            captured = request('/api/capture', {'target': '0:1'})[2]
+            assert captured.get('agent') == expected, (command, captured)
+            assert captured['content'] == state['capture_text']
+            assert captured['styled_content'] == state['capture_text']
+        state.pop('foreground'); state.pop('capture_text')
+        state_file.write_text(json.dumps(state))
         assert request('/api/window-status')[2][0]['waiting']
         status, _, opened = request('/api/picker/open', {'target': '0:1', 'fingerprint': capture['question_queue']['fingerprint']})
         assert status == 200 and opened['picker']['codex_async']

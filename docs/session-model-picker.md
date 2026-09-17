@@ -15,8 +15,9 @@ Inspected in isolated tmux windows on 2026-09-08:
 | Codex | 0.153.4 | `/model`; choose model, then reasoning level. “More reasoning…” opens Max/Ultra where available. |
 | AGY | 1.1.28 | `/model`; up/down selects a model; left/right adjusts its supported effort levels. Some models have fixed effort. |
 | Eunice | locally extended 1.0.14 | `/model <id> [effort]` and `/effort <level>` replace the session client while preserving messages, instructions and tool outputs. |
+| Hermes | v0.21.3, upstream `4e9d3c71` (checked 2026-09-16) | `/model`; provider → model → native reasoning choices → Apply. Back returns to models; Cancel unwinds the picker. Models without reasoning controls apply on selection. |
 
-The first three integrations read their live menus, including account-specific
+Claude, Codex, AGY, and Hermes read their live menus, including account-specific
 choices. No model names or reasoning menus are hardcoded in the web client.
 Their native persistence behavior applies; Claude's session-only shortcut avoids
 changing its default. Codex's [model command](https://learn.chatgpt.com/docs/developer-commands?surface=cli)
@@ -59,3 +60,30 @@ effort, and Codex model/basic/advanced reasoning screens. Unit tests cover stale
 menus and nonempty/busy composers. Live tmux checks exercise model selection,
 effort, apply and cancel; browser checks cover the dialog and fixed Menu position
 at desktop and phone widths.
+
+Hermes fixtures include native provider, filtered model, and reasoning screens.
+The idle check recognizes the status prefix even after `ctx --` becomes token
+usage (for example, `128K/1.3M`). A live interrupt composer still blocks model
+changes; an old interrupt line above a newer status row does not.
+They cover profile prefixes, variable blank padding, missing status bars while
+menus are open, stale menus, and explicit model/effort confirmation. The live
+browser check is opt-in:
+
+```bash
+HERMES_TEST_URL=http://127.0.0.1:15535 \
+NODE_PATH=/tmp/tmux-terminal-browser-check/node_modules \
+node --test tests/hermes-picker.browser.test.cjs
+```
+
+This requires an already-running isolated backend with `TMUX_HOSTS` set to
+`[{"id":"hermes-test","ssh":null}]` and a `hermes-verification:0` window running
+Hermes. The test refuses the production port and other host/session names.
+It changes only the test Hermes session's model/effort and never stops sessions.
+
+Start test tmux servers with `env -u TMUX -u TMUX_PANE tmux -S <private-socket>
+-f /dev/null new-session ...`. Pin **every** backend tmux invocation to that
+same explicit socket using a test-only PATH wrapper; clearing `TMUX` only on
+server creation is insufficient. The wrapper must reject shutdown commands
+and alternate socket options. Preserve test sessions after verification; do not
+use a shutdown cleanup trap. An isolated Hermes profile keeps test configuration
+and session history separate from the normal Hermes home.

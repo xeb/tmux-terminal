@@ -1,3 +1,4 @@
+mod hosts;
 mod picker;
 mod session_model;
 mod web_assets;
@@ -41,6 +42,7 @@ struct ApiResponse {
 struct TmuxWindow {
     target: String,
     name: String,
+    window_id: Option<String>,
 }
 
 #[derive(Deserialize)]
@@ -61,6 +63,7 @@ enum AgentKind {
     Codex,
     Agy,
     Eunice,
+    Hermes,
 }
 
 #[derive(Serialize)]
@@ -88,15 +91,32 @@ struct CaptureResponse {
     picker: Option<picker::Picker>,
 }
 
+fn detect_running_agent(pane: &str, command: &str) -> Option<AgentKind> {
+    // Foreground CLI names are authoritative even when their transcript quotes
+    // another agent's UI or the current prompt is temporarily off-screen.
+    match command {
+        "codex" => Some(AgentKind::Codex),
+        "claude" => Some(AgentKind::Claude),
+        "agy" => Some(AgentKind::Agy),
+        "eunice" => Some(AgentKind::Eunice),
+        "hermes" => Some(AgentKind::Hermes),
+        // Interpreter names need a matching UI, never just a process name.
+        "python" | "python3" if has_live_hermes_ui(pane) => Some(AgentKind::Hermes),
+        "node" => detect_agent(pane).filter(|agent| {
+            matches!(agent, AgentKind::Codex | AgentKind::Claude | AgentKind::Agy)
+        }),
+        _ => None,
+    }
+}
+
 fn detect_agent(pane: &str) -> Option<AgentKind> {
     if picker::codex_question_back_key(pane).is_some() {
         return Some(AgentKind::Codex);
     }
-    // Content detection avoids a second tmux process on every one-second pane
-    // poll. That extra display-message call doubled tmux command traffic and
-    // made unrelated operations such as creating/listing windows queue behind
-    // capture requests.
-    let tail: Vec<&str> = pane.lines().rev().take(80).collect();
+    // Content signatures disambiguate interpreter-based launches. Capture
+    // callers also check the foreground command via detect_running_agent.
+    let non_empty: Vec<&str> = pane.lines().filter(|line| !line.trim().is_empty()).collect();
+    let tail: Vec<&str> = non_empty.iter().rev().take(80).copied().collect();
     let has_composer = tail.iter().any(|line| line.contains("Ask Codex to do anything"));
     let has_question = tail.iter().any(|line| {
         line.contains("enter to submit answer") || line.trim().starts_with("Question ")
@@ -114,6 +134,9 @@ fn detect_agent(pane: &str) -> Option<AgentKind> {
     if tail.iter().any(|line| is_eunice_marker(line)) {
         return Some(AgentKind::Eunice);
     }
+    if has_live_hermes_ui(pane) {
+        return Some(AgentKind::Hermes);
+    }
     if tail.iter().any(|line| line.contains("Claude Code v"))
         || (tail.iter().any(|line| line.trim_start().starts_with('❯'))
             && tail.iter().any(|line| line.contains("bypass permissions on") || line.contains("? for shortcuts")))
@@ -123,7 +146,8 @@ fn detect_agent(pane: &str) -> Option<AgentKind> {
     if let Some(menu) = session_model::parse(pane) {
         return match menu.agent.as_str() {
             "claude" => Some(AgentKind::Claude), "codex" => Some(AgentKind::Codex),
-            "agy" => Some(AgentKind::Agy), "eunice" => Some(AgentKind::Eunice), _ => None,
+            "agy" => Some(AgentKind::Agy), "eunice" => Some(AgentKind::Eunice),
+            "hermes" => Some(AgentKind::Hermes), _ => None,
         };
     }
     None
@@ -139,7 +163,7 @@ fn detect_agent(pane: &str) -> Option<AgentKind> {
 fn agy_footer(line: &str) -> Option<&str> {
     static RE: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
     let re = RE.get_or_init(|| {
-        regex::Regex::new(r"^\s*(\? for shortcuts|esc to cancel)\s{2,}\S.*·\s*(?:high|medium|low)\b")
+        regex::Regex::new(r"^\s*(\? for shortcuts|esc to cancel)\s{2,}\S")
             .expect("static regex")
     });
     re.captures(line).map(|caps| caps.get(1).map_or("", |m| m.as_str()))
@@ -180,6 +204,24 @@ fn is_eunice_thinking(line: &str) -> bool {
     trimmed.len() > 1
         && trimmed.starts_with(['✻', '✶', '✺', '✹', '✷'])
         && trimmed[trimmed.chars().next().map_or(0, char::len_utf8)..].trim() == "Thinking…"
+}
+
+fn has_live_hermes_ui(pane: &str) -> bool {
+    pane.lines().filter(|line| !line.trim().is_empty()).rev().take(15).any(|line| {
+        is_hermes_status(line)
+            || (line.trim_start().starts_with("☤ ❯ msg=interrupt")
+                && line.contains("/queue") && line.contains("Ctrl+C cancel"))
+    }) || session_model::parse(pane).is_some_and(|menu| menu.agent == "hermes")
+}
+
+fn is_hermes_status(line: &str) -> bool {
+    // Context changes from "ctx --" to token counts after the first turn.
+    // The status prefix stays stable; the busy composer also starts with ☤
+    // but follows it with ❯ and must never be mistaken for an idle status.
+    line.trim_start().strip_prefix("☤ ").is_some_and(|rest| {
+        let rest = rest.trim_start();
+        !rest.is_empty() && !rest.starts_with('❯')
+    })
 }
 
 /// Strip terminal control sequences while preserving every displayed byte.
@@ -250,11 +292,10 @@ async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse 
 
     // Capture with terminal attributes. Plain text is derived from this one
     // snapshot so what the user sees and what the picker verifies cannot drift.
-    // Read history size and capture in one tmux invocation. The web client
+    // Read history size, foreground command and capture in one tmux invocation. The web client
     // starts with a small history and expands it only when scrolling back.
-    let result = tokio::process::Command::new("tmux")
-        .kill_on_drop(true)
-        .args(["display-message", "-p", "-t", &target, "#{history_size}", ";",
+    let result = hosts::tmux()
+        .args(["display-message", "-p", "-t", &target, "#{history_size}\t#{pane_current_command}", ";",
             "capture-pane", "-p", "-e", "-t", &target, "-S", &format!("-{history_lines}")])
         .output().await;
 
@@ -262,11 +303,12 @@ async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse 
         Ok(output) => {
             if output.status.success() {
                 let snapshot = String::from_utf8_lossy(&output.stdout);
-                let (history_size, styled_content) = snapshot.split_once('\n').unwrap_or(("0", ""));
+                let (metadata, styled_content) = snapshot.split_once('\n').unwrap_or(("0", ""));
+                let (history_size, command) = metadata.split_once('\t').unwrap_or((metadata, ""));
                 let has_more = history_lines < 1000 && history_size.parse::<usize>().unwrap_or(0) > history_lines;
                 let styled_content = styled_content.to_string();
                 let content = strip_ansi(&styled_content);
-                let agent = detect_agent(&content);
+                let agent = detect_running_agent(&content, command);
                 // Parsed server-side and only here. If the client parsed too, the
                 // renderer and the committer would drift, and the failure mode is
                 // a card that shows one option and sends another.
@@ -310,10 +352,10 @@ async fn capture_pane(Json(payload): Json<CaptureRequest>) -> impl IntoResponse 
 /// descriptions) pushes its own top rule into scrollback, and a capture that
 /// cannot see the top rule cannot parse the prompt — every select then fails
 /// with a false "no prompt is waiting".
-fn capture_visible(target: &str) -> Option<String> {
-    let output = Command::new("tmux")
+async fn capture_visible(target: &str) -> Option<String> {
+    let output = hosts::tmux()
         .args(["capture-pane", "-p", "-t", target, "-S", "-200"])
-        .output()
+        .output().await
         .ok()?;
     if !output.status.success() {
         return None;
@@ -373,11 +415,11 @@ fn picker_conflict(reason: &str, current: Option<picker::Picker>) -> (StatusCode
 }
 
 /// Re-capture and re-parse, refusing if the prompt is not the one the client saw.
-fn verify_picker(
+async fn verify_picker(
     target: &str,
     fingerprint: &str,
 ) -> Result<picker::Picker, (StatusCode, Json<PickerActionResponse>)> {
-    let Some(pane) = capture_visible(target) else {
+    let Some(pane) = capture_visible(target).await else {
         return Err(picker_conflict("window is gone", None));
     };
     let Some(current) = picker::parse(&pane) else {
@@ -389,12 +431,12 @@ fn verify_picker(
     Ok(current)
 }
 
-fn send_keys(target: &str, keys: &[String]) -> Result<(), String> {
+async fn send_keys(target: &str, keys: &[String]) -> Result<(), String> {
     let mut args: Vec<&str> = vec!["send-keys", "-t", target];
     args.extend(keys.iter().map(|k| k.as_str()));
-    let output = Command::new("tmux")
+    let output = hosts::tmux()
         .args(&args)
-        .output()
+        .output().await
         .map_err(|e| format!("failed to send keys: {}", e))?;
     if output.status.success() {
         Ok(())
@@ -405,23 +447,31 @@ fn send_keys(target: &str, keys: &[String]) -> Result<(), String> {
 
 // Serialize picker transitions and normal text submission for the same pane.
 // Pin to a pane id so a window reorder cannot redirect an in-flight action.
-async fn lock_pane_action(target: &str) -> (String, tokio::sync::OwnedMutexGuard<()>) {
-    static LOCKS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>>> = std::sync::OnceLock::new();
-    let pane = Command::new("tmux").args(["display-message", "-p", "-t", target, "#{pane_id}"])
-        .output().ok().filter(|o| o.status.success())
-        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
-        .filter(|id| id.starts_with('%')).unwrap_or_else(|| target.to_string());
+async fn lock_host_action(identity: &str) -> tokio::sync::OwnedMutexGuard<()> {
+    type Locks = std::collections::HashMap<String, std::sync::Weak<tokio::sync::Mutex<()>>>;
+    static LOCKS: std::sync::OnceLock<std::sync::Mutex<Locks>> = std::sync::OnceLock::new();
+    let key = hosts::key(identity);
     let lock = {
         let mut locks = LOCKS.get_or_init(Default::default).lock().unwrap();
         locks.retain(|_, lock| lock.strong_count() > 0);
-        if let Some(lock) = locks.get(&pane).and_then(|lock| lock.upgrade()) { lock }
+        if let Some(lock) = locks.get(&key).and_then(|lock| lock.upgrade()) { lock }
         else {
             let lock = Arc::new(tokio::sync::Mutex::new(()));
-            locks.insert(pane.clone(), Arc::downgrade(&lock));
+            locks.insert(key, Arc::downgrade(&lock));
             lock
         }
     };
-    (pane, lock.lock_owned().await)
+    lock.lock_owned().await
+}
+
+async fn lock_pane_action(target: &str) -> Result<(String, tokio::sync::OwnedMutexGuard<()>), String> {
+    let output = hosts::tmux().args(["display-message", "-p", "-t", target, "#{pane_id}"])
+        .output().await.map_err(|e| e.to_string())?;
+    if !output.status.success() { return Err("Could not resolve the selected pane".into()); }
+    let pane = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    if !pane.starts_with('%') { return Err("Invalid pane identity".into()); }
+    let guard = lock_host_action(&format!("pane:{pane}")).await;
+    Ok((pane, guard))
 }
 
 fn question_mode_panes() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
@@ -431,23 +481,23 @@ fn question_mode_panes() -> &'static std::sync::Mutex<std::collections::HashSet<
 
 fn confirm_question_exit(target: &str, pane: &str) -> Result<(), String> {
     let mut panes = question_mode_panes().lock().unwrap();
-    if panes.contains(target) && !picker::codex_main_prompt(pane) {
+    if panes.contains(&hosts::key(target)) && !picker::codex_main_prompt(pane) {
         return Err("Could not confirm Codex's main prompt. Return to it in the terminal before sending text.".to_string());
     }
-    panes.remove(target);
+    panes.remove(&hosts::key(target));
     Ok(())
 }
 
 async fn return_to_main_prompt(target: &str) -> Result<(), String> {
     for _ in 0..32 {
-        let pane = capture_visible(target).ok_or("window is gone")?;
+        let pane = capture_visible(target).await.ok_or("window is gone")?;
         let Some(key) = picker::codex_question_back_key(&pane) else { return confirm_question_exit(target, &pane) };
-        question_mode_panes().lock().unwrap().insert(target.to_string());
-        send_keys(target, &[key])?;
+        question_mode_panes().lock().unwrap().insert(hosts::key(target));
+        send_keys(target, &[key]).await?;
         let mut changed = false;
         for _ in 0..25 {
             tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-            let fresh = capture_visible(target).ok_or("window is gone")?;
+            let fresh = capture_visible(target).await.ok_or("window is gone")?;
             if picker::codex_question_back_key(&fresh).is_none() { return confirm_question_exit(target, &fresh) }
             // A previous-question transition changes its progress header. Timer
             // changes alone must not cause repeated back keys against stale UI.
@@ -465,21 +515,23 @@ async fn return_to_main_prompt(target: &str) -> Result<(), String> {
 struct PickerOpenRequest { target: String, fingerprint: String }
 
 async fn picker_open(Json(payload): Json<PickerOpenRequest>) -> impl IntoResponse {
-    let (target, _guard) = lock_pane_action(&payload.target).await;
-    let Some(pane) = capture_visible(&target) else { return picker_conflict("window is gone", None) };
+    let (target, _guard) = match lock_pane_action(&payload.target).await {
+        Ok(locked) => locked, Err(error) => return picker_conflict(&error, None),
+    };
+    let Some(pane) = capture_visible(&target).await else { return picker_conflict("window is gone", None) };
     if let Some(picker) = picker::parse(&pane).filter(|p| p.codex_async) {
-        question_mode_panes().lock().unwrap().insert(target.clone());
+        question_mode_panes().lock().unwrap().insert(hosts::key(&target));
         return (StatusCode::OK, Json(PickerActionResponse { success: true, error: None,
             picker: Some(picker), outcome: Some("changed".to_string()) }));
     }
     let Some(queue) = picker::question_queue(&pane).filter(|q| q.fingerprint == payload.fingerprint) else {
         return picker_conflict("the pending questions changed — refresh and try again", None);
     };
-    if let Err(error) = send_keys(&target, &[queue.open_key]) { return picker_conflict(&error, None); }
-    question_mode_panes().lock().unwrap().insert(target.clone());
+    if let Err(error) = send_keys(&target, &[queue.open_key]).await { return picker_conflict(&error, None); }
+    question_mode_panes().lock().unwrap().insert(hosts::key(&target));
     for _ in 0..40 {
         tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-        if let Some(picker) = capture_visible(&target).and_then(|p| picker::parse(&p)).filter(|p| p.codex_async) {
+        if let Some(picker) = capture_visible(&target).await.and_then(|p| picker::parse(&p)).filter(|p| p.codex_async) {
             return (StatusCode::OK, Json(PickerActionResponse { success: true, error: None,
                 picker: Some(picker), outcome: Some("changed".to_string()) }));
         }
@@ -492,7 +544,9 @@ async fn picker_open(Json(payload): Json<PickerOpenRequest>) -> impl IntoRespons
 struct PickerCloseRequest { target: String }
 
 async fn picker_close(Json(payload): Json<PickerCloseRequest>) -> impl IntoResponse {
-    let (target, _guard) = lock_pane_action(&payload.target).await;
+    let (target, _guard) = match lock_pane_action(&payload.target).await {
+        Ok(locked) => locked, Err(error) => return (StatusCode::CONFLICT, Json(ApiResponse { success:false, error:Some(error) })),
+    };
     match return_to_main_prompt(&target).await {
         Ok(()) => (StatusCode::OK, Json(ApiResponse { success: true, error: None })),
         Err(error) => (StatusCode::CONFLICT, Json(ApiResponse { success: false, error: Some(error) })),
@@ -503,9 +557,11 @@ async fn picker_close(Json(payload): Json<PickerCloseRequest>) -> impl IntoRespo
 /// computed here from a fresh capture, so there is no polling window in which the
 /// terminal could move out from under it.
 async fn picker_select(Json(mut payload): Json<PickerSelectRequest>) -> impl IntoResponse {
-    let (target, _guard) = lock_pane_action(&payload.target).await;
+    let (target, _guard) = match lock_pane_action(&payload.target).await {
+        Ok(locked) => locked, Err(error) => return picker_conflict(&error, None),
+    };
     payload.target = target;
-    let current = match verify_picker(&payload.target, &payload.fingerprint) {
+    let current = match verify_picker(&payload.target, &payload.fingerprint).await {
         Ok(p) => p,
         Err(e) => return e,
     };
@@ -525,7 +581,7 @@ async fn picker_select(Json(mut payload): Json<PickerSelectRequest>) -> impl Int
             let Some(key) = picker::select_key(chosen.number) else {
                 return picker_conflict("this text option is not directly reachable", Some(current));
             };
-            if let Err(error) = send_keys(&payload.target, &[key]) {
+            if let Err(error) = send_keys(&payload.target, &[key]).await {
                 return picker_conflict(&error, Some(current));
             }
         }
@@ -538,7 +594,7 @@ async fn picker_select(Json(mut payload): Json<PickerSelectRequest>) -> impl Int
         picker::select_key(chosen.number)
     };
     if let Some(key) = digit {
-        if let Err(e) = send_keys(&payload.target, &[key]) {
+        if let Err(e) = send_keys(&payload.target, &[key]).await {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(PickerActionResponse { success: false, error: Some(e), picker: None, outcome: None }),
@@ -546,11 +602,11 @@ async fn picker_select(Json(mut payload): Json<PickerSelectRequest>) -> impl Int
         }
     } else {
         if let Err(e) = walk_cursor_to(&payload.target, &payload.fingerprint, current.cursor, payload.index).await {
-            return picker_conflict(&e, capture_visible(&payload.target).and_then(|p| picker::parse(&p)));
+            return picker_conflict(&e, capture_visible(&payload.target).await.and_then(|p| picker::parse(&p)));
         }
         // Enter must be its own invocation. Batched with movement, Claude Code's
         // TUI applies it against pre-move state and commits the wrong option.
-        if let Err(e) = send_keys(&payload.target, &["Enter".to_string()]) {
+        if let Err(e) = send_keys(&payload.target, &["Enter".to_string()]).await {
             return (
                 StatusCode::BAD_REQUEST,
                 Json(PickerActionResponse { success: false, error: Some(e), picker: None, outcome: None }),
@@ -572,7 +628,7 @@ async fn picker_select(Json(mut payload): Json<PickerSelectRequest>) -> impl Int
     let mut fresh: Option<picker::Picker> = None;
     for _ in 0..34 {
         tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-        let Some(pane) = capture_visible(&payload.target) else {
+        let Some(pane) = capture_visible(&payload.target).await else {
             outcome = "committed";
             break;
         };
@@ -623,12 +679,12 @@ async fn walk_cursor_to(
         guard += 1;
 
         let key = picker::step_key(if to > at { 1 } else { -1 }).to_string();
-        send_keys(target, &[key])?;
+        send_keys(target, &[key]).await?;
 
         let mut moved = false;
         for _ in 0..25 {
             tokio::time::sleep(std::time::Duration::from_millis(40)).await;
-            match capture_visible(target).and_then(|p| picker::parse(&p)) {
+            match capture_visible(target).await.and_then(|p| picker::parse(&p)) {
                 Some(p) if p.fingerprint == fingerprint && p.cursor != at => {
                     at = p.cursor;
                     moved = true;
@@ -649,15 +705,17 @@ async fn walk_cursor_to(
 
 /// Move the terminal's own cursor by one row without committing.
 async fn picker_step(Json(mut payload): Json<PickerStepRequest>) -> impl IntoResponse {
-    let (target, _guard) = lock_pane_action(&payload.target).await;
+    let (target, _guard) = match lock_pane_action(&payload.target).await {
+        Ok(locked) => locked, Err(error) => return picker_conflict(&error, None),
+    };
     payload.target = target;
-    let current = match verify_picker(&payload.target, &payload.fingerprint) {
+    let current = match verify_picker(&payload.target, &payload.fingerprint).await {
         Ok(p) => p,
         Err(e) => return e,
     };
 
     let key = picker::step_key(payload.delta).to_string();
-    match send_keys(&payload.target, &[key]) {
+    match send_keys(&payload.target, &[key]).await {
         Ok(()) => (
             StatusCode::OK,
             Json(PickerActionResponse { success: true, error: None, picker: Some(current), outcome: None }),
@@ -680,7 +738,9 @@ struct PickerTextRequest {
 /// Codex treats Enter within its paste burst window as a newline. A successful
 /// tmux write is therefore not evidence that an answer was submitted.
 async fn picker_text(Json(mut payload): Json<PickerTextRequest>) -> impl IntoResponse {
-    let (target, _guard) = lock_pane_action(&payload.target).await;
+    let (target, _guard) = match lock_pane_action(&payload.target).await {
+        Ok(locked) => locked, Err(error) => return picker_conflict(&error, None),
+    };
     payload.target = target;
     let fail = |status, message: String| (status, Json(PickerActionResponse {
         success: false, error: Some(message), picker: None, outcome: None,
@@ -688,18 +748,18 @@ async fn picker_text(Json(mut payload): Json<PickerTextRequest>) -> impl IntoRes
     let text = payload.text.trim();
     let Some(fingerprint) = payload.fingerprint.as_deref() else {
         // Claude's follow-up editor may outlive its original picker.
-        if capture_visible(&payload.target).and_then(|p| picker::parse(&p)).is_some_and(|p| p.codex_async) {
+        if capture_visible(&payload.target).await.and_then(|p| picker::parse(&p)).is_some_and(|p| p.codex_async) {
             return fail(StatusCode::CONFLICT, "reopen the question before sending an answer".to_string());
         }
         if text.is_empty() { return fail(StatusCode::BAD_REQUEST, "empty reply".to_string()); }
-        if let Err(e) = send_keys_literal(&payload.target, text) { return fail(StatusCode::BAD_REQUEST, e); }
+        if let Err(e) = send_keys_literal(&payload.target, text).await { return fail(StatusCode::BAD_REQUEST, e); }
         tokio::time::sleep(std::time::Duration::from_millis(300)).await;
-        if let Err(e) = send_keys(&payload.target, &["Enter".to_string()]) { return fail(StatusCode::BAD_REQUEST, e); }
+        if let Err(e) = send_keys(&payload.target, &["Enter".to_string()]).await { return fail(StatusCode::BAD_REQUEST, e); }
         return (StatusCode::OK, Json(PickerActionResponse {
             success: true, error: None, picker: None, outcome: Some("committed".to_string()),
         }));
     };
-    let mut current = match verify_picker(&payload.target, fingerprint) {
+    let mut current = match verify_picker(&payload.target, fingerprint).await {
         Ok(p) if p.codex_async && p.options.get(p.cursor).is_some_and(|o| o.is_meta) => p,
         _ => return fail(StatusCode::CONFLICT, "question changed — reopen it before sending an answer".to_string()),
     };
@@ -711,7 +771,7 @@ async fn picker_text(Json(mut payload): Json<PickerTextRequest>) -> impl IntoRes
         }
     } else {
         if text.is_empty() { return fail(StatusCode::BAD_REQUEST, "empty reply".to_string()); }
-        if let Err(e) = send_keys_literal(&payload.target, text) { return fail(StatusCode::BAD_REQUEST, e); }
+        if let Err(e) = send_keys_literal(&payload.target, text).await { return fail(StatusCode::BAD_REQUEST, e); }
     }
 
     // Wait until the editor has actually rendered a stable draft, then leave
@@ -721,7 +781,7 @@ async fn picker_text(Json(mut payload): Json<PickerTextRequest>) -> impl IntoRes
     let mut ready = false;
     for _ in 0..10 {
         tokio::time::sleep(std::time::Duration::from_millis(200)).await;
-        let Ok(p) = verify_picker(&payload.target, fingerprint) else { break };
+        let Ok(p) = verify_picker(&payload.target, fingerprint).await else { break };
         if !p.options.get(p.cursor).is_some_and(|o| o.is_meta) { break; }
         ready = p.answer_draft.is_some() && p.answer_draft == previous_draft;
         previous_draft = p.answer_draft.clone();
@@ -729,12 +789,12 @@ async fn picker_text(Json(mut payload): Json<PickerTextRequest>) -> impl IntoRes
         if ready { break; }
     }
     if ready {
-        if let Err(e) = send_keys(&payload.target, &["Enter".to_string()]) { return fail(StatusCode::BAD_REQUEST, e); }
+        if let Err(e) = send_keys(&payload.target, &["Enter".to_string()]).await { return fail(StatusCode::BAD_REQUEST, e); }
         // Exactly one Enter. Repeated submits can answer the next question;
         // only observed progress or a return to the composer confirms success.
         for _ in 0..34 {
             tokio::time::sleep(std::time::Duration::from_millis(60)).await;
-            let Some(pane) = capture_visible(&payload.target) else { continue };
+            let Some(pane) = capture_visible(&payload.target).await else { continue };
             if picker::codex_main_prompt(&pane) {
                 return (StatusCode::OK, Json(PickerActionResponse {
                     success: true, error: None, picker: None, outcome: Some("committed".to_string()),
@@ -755,10 +815,10 @@ async fn picker_text(Json(mut payload): Json<PickerTextRequest>) -> impl IntoRes
     }))
 }
 
-fn send_keys_literal(target: &str, text: &str) -> Result<(), String> {
-    let output = Command::new("tmux")
+async fn send_keys_literal(target: &str, text: &str) -> Result<(), String> {
+    let output = hosts::tmux()
         .args(["send-keys", "-t", target, "-l", text])
-        .output()
+        .output().await
         .map_err(|e| format!("failed to send text: {}", e))?;
     if output.status.success() {
         Ok(())
@@ -767,7 +827,7 @@ fn send_keys_literal(target: &str, text: &str) -> Result<(), String> {
     }
 }
 
-#[derive(Serialize)]
+#[derive(Clone, Serialize)]
 struct WindowStatus {
     target: String,
     /// A prompt is on screen and nothing moves until it is answered.
@@ -816,6 +876,9 @@ fn parse_working(pane: &str) -> Option<(String, String)> {
         return Some(found);
     }
     if let Some(found) = parse_eunice_working(pane, tail) {
+        return Some(found);
+    }
+    if let Some(found) = parse_hermes_working(tail) {
         return Some(found);
     }
     for line in tail.iter().rev() {
@@ -878,51 +941,96 @@ fn parse_eunice_working(pane: &str, tail: &[&str]) -> Option<(String, String)> {
     Some(("Thinking".to_string(), String::new()))
 }
 
+/// Hermes replaces its idle composer with an interrupt footer while a turn is
+/// active. A later status/composer row wins over an old footer in scrollback.
+fn parse_hermes_working(tail: &[&str]) -> Option<(String, String)> {
+    let busy = tail.iter().rposition(|line| {
+        line.contains("msg=interrupt") && line.contains("/queue") && line.contains("Ctrl+C cancel")
+    })?;
+    if tail[busy + 1..]
+        .iter()
+        .any(|line| is_hermes_status(line))
+    {
+        return None;
+    }
+    static SPINNER: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static ELAPSED: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    static TOOL: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    let spinner = SPINNER.get_or_init(|| {
+        regex::Regex::new(r"⌐■-■\s+([A-Za-z_][\w -]*?)\.\.\.").expect("static regex")
+    });
+    let elapsed = ELAPSED.get_or_init(|| regex::Regex::new(r"⏱\s*(\d+s)").expect("static regex"));
+    let tool = TOOL.get_or_init(|| regex::Regex::new(r"calling tool:\s*([A-Za-z_][\w-]*)").expect("static regex"));
+    let mut verb = None;
+    let mut meta = String::new();
+    for line in tail[..=busy].iter().rev() {
+        if meta.is_empty() {
+            if let Some(caps) = elapsed.captures(line) {
+                meta = caps[1].to_string();
+            }
+        }
+        if verb.is_none() {
+            if let Some(caps) = spinner.captures(line) {
+                let raw = caps[1].trim();
+                let mut chars = raw.chars();
+                verb = chars.next().map(|first| first.to_uppercase().collect::<String>() + chars.as_str());
+            } else if let Some(caps) = tool.captures(line) {
+                verb = Some(format!("Tool: {}", &caps[1]));
+            }
+        }
+        if verb.is_some() && !meta.is_empty() { break; }
+    }
+    Some((verb.unwrap_or_else(|| "Working".to_string()), meta))
+}
+
 /// Per-window liveness: which windows are waiting on a prompt, and which are
 /// busy working. This is what makes switching away safe rather than merely
 /// permitted — without it you switch away and forget. One capture per window
 /// answers both questions, so the busy state costs no extra tmux calls.
 async fn window_status() -> impl IntoResponse {
-    let Ok(output) = Command::new("tmux")
-        .args(["list-windows", "-a", "-F", "#{session_name}:#{window_index}"])
-        .output()
-    else {
-        return (StatusCode::OK, Json(Vec::<WindowStatus>::new()));
+    type CachedStatus = Option<(std::time::Instant, Vec<WindowStatus>)>;
+    static CACHES: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, Arc<tokio::sync::Mutex<CachedStatus>>>>> = std::sync::OnceLock::new();
+    let slot = CACHES.get_or_init(Default::default).lock().unwrap().entry(hosts::current().id)
+        .or_insert_with(|| Arc::new(tokio::sync::Mutex::new(None))).clone();
+    let mut cache = slot.lock().await;
+    if let Some((at, rows)) = &*cache {
+        if at.elapsed() < std::time::Duration::from_secs(2) { return (StatusCode::OK, Json(rows.clone())); }
+    }
+    match collect_window_status().await {
+        Ok(rows) => { *cache = Some((std::time::Instant::now(), rows.clone())); (StatusCode::OK, Json(rows)) },
+        Err(_) => (StatusCode::BAD_GATEWAY, Json(vec![])),
+    }
+}
+
+async fn collect_window_status() -> Result<Vec<WindowStatus>, String> {
+    let captures: Vec<(String,String)> = if hosts::remote() {
+        let rows = hosts::fs_json("status", serde_json::json!({})).await?;
+        rows.as_array().ok_or("Invalid status response")?.iter().filter_map(|row| {
+            Some((row["target"].as_str()?.to_string(), row["pane"].as_str()?.to_string()))
+        }).collect()
+    } else {
+        let output = hosts::tmux().args(["list-windows", "-a", "-F", "#{session_name}:#{window_index}"])
+            .output().await.map_err(|e| e.to_string())?;
+        if !output.status.success() { return Ok(vec![]); }
+        let targets: Vec<String> = String::from_utf8_lossy(&output.stdout).lines().filter(|t| !t.trim().is_empty()).map(str::to_string).collect();
+        use futures::StreamExt;
+        futures::stream::iter(targets.into_iter().map(|target| async move {
+            capture_visible(&target).await.map(|pane| (target, pane))
+        })).buffered(4).collect::<Vec<_>>().await.into_iter().flatten().collect()
     };
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    let statuses: Vec<WindowStatus> = stdout
-        .lines()
-        .filter(|t| !t.trim().is_empty())
-        .filter_map(|target| {
-            let pane = capture_visible(target)?;
-            let waiting = picker::parse(&pane).is_some() || picker::question_queue(&pane).is_some();
-            // A window at a prompt is not working, whatever the last status
-            // line said — the question is the thing you need to act on.
-            let working = if waiting { None } else { parse_working(&pane) };
-            if !waiting && working.is_none() {
-                return None;
-            }
-            let (verb, meta) = match working {
-                Some((v, m)) => (Some(v), Some(m)),
-                None => (None, None),
-            };
-            Some(WindowStatus {
-                target: target.to_string(),
-                waiting,
-                verb,
-                meta,
-            })
-        })
-        .collect();
-
-    (StatusCode::OK, Json(statuses))
+    Ok(captures.into_iter().filter_map(|(target,pane)| {
+        let waiting = picker::parse(&pane).is_some() || picker::question_queue(&pane).is_some();
+        let working = if waiting { None } else { parse_working(&pane) };
+        if !waiting && working.is_none() { return None; }
+        let (verb, meta) = working.map(|(v,m)| (Some(v),Some(m))).unwrap_or_default();
+        Some(WindowStatus { target, waiting, verb, meta })
+    }).collect())
 }
 
 async fn list_windows() -> impl IntoResponse {
-    let result = Command::new("tmux")
-        .args(["list-windows", "-a", "-F", "#{session_name}:#{window_index}\t#{window_name}"])
-        .output();
+    let result = hosts::tmux()
+        .args(["list-windows", "-a", "-F", "#{session_name}:#{window_index}\t#{window_name}\t#{window_id}"])
+        .output().await;
 
     match result {
         Ok(output) => {
@@ -932,10 +1040,11 @@ async fn list_windows() -> impl IntoResponse {
                     .lines()
                     .filter_map(|line| {
                         let parts: Vec<&str> = line.split('\t').collect();
-                        if parts.len() == 2 {
+                        if parts.len() >= 2 {
                             Some(TmuxWindow {
                                 target: parts[0].to_string(),
-                                name: parts[1].to_string(),
+                                name: if parts.len() > 2 { parts[1..parts.len()-1].join("\t") } else { parts[1].to_string() },
+                                window_id: parts.last().filter(|id| id.starts_with('@') && id[1..].bytes().all(|b| b.is_ascii_digit())).filter(|_| parts.len() > 2).map(|s| s.to_string()),
                             })
                         } else {
                             None
@@ -958,26 +1067,24 @@ async fn send_to_tmux(Json(payload): Json<SendCommand>) -> impl IntoResponse {
         payload.session
     };
 
-    let (session, _guard) = lock_pane_action(&session).await;
+    let (session, _guard) = match lock_pane_action(&session).await {
+        Ok(locked) => locked,
+        Err(error) => return (StatusCode::CONFLICT, Json(ApiResponse { success:false, error:Some(error) })),
+    };
     if let Err(error) = return_to_main_prompt(&session).await {
         return (StatusCode::CONFLICT, Json(ApiResponse { success: false, error: Some(error) }));
     }
 
     let command = payload.command;
 
-    // Send the command text literally
-    let _ = Command::new("tmux")
-        .args(["send-keys", "-t", &session, "-l", &command])
-        .output();
-
-    // Send Enter key 3 times with 500ms delay
+    if let Err(error) = send_keys_literal(&session, &command).await {
+        return (StatusCode::BAD_GATEWAY, Json(ApiResponse { success: false, error: Some(error) }));
+    }
     for i in 0..3 {
-        if i > 0 {
-            std::thread::sleep(std::time::Duration::from_millis(500));
+        if i > 0 { tokio::time::sleep(std::time::Duration::from_millis(500)).await; }
+        if let Err(error) = send_keys(&session, &["Enter".into()]).await {
+            return (StatusCode::BAD_GATEWAY, Json(ApiResponse { success: false, error: Some(error) }));
         }
-        let _ = Command::new("tmux")
-            .args(["send-keys", "-t", &session, "Enter"])
-            .output();
     }
 
     (
@@ -1001,6 +1108,15 @@ struct ServeImageQuery {
 async fn serve_image(
     axum::extract::Query(query): axum::extract::Query<ServeImageQuery>,
 ) -> impl IntoResponse {
+    if hosts::remote() {
+        let result = hosts::filesystem("read", serde_json::json!({"path":query.path,"image":true}), None).await;
+        let ext = std::path::Path::new(&query.path).extension().and_then(|s| s.to_str()).unwrap_or("").to_lowercase();
+        let mime = match ext.as_str() { "jpg"|"jpeg" => "image/jpeg", "png"=>"image/png", "gif"=>"image/gif", "webp"=>"image/webp", "bmp"=>"image/bmp", "svg"=>"image/svg+xml", "tif"|"tiff"=>"image/tiff", _=>"application/octet-stream" };
+        return match result {
+            Ok(bytes) => (StatusCode::OK, [(header::CONTENT_TYPE,mime)], axum::body::Body::from(bytes)),
+            Err(error) => (StatusCode::BAD_GATEWAY, [(header::CONTENT_TYPE,"text/plain")], axum::body::Body::from(error)),
+        };
+    }
     let path = std::path::Path::new(&query.path);
 
     // Canonicalize to prevent directory traversal
@@ -1056,6 +1172,15 @@ async fn serve_image(
 async fn serve_file(
     axum::extract::Query(query): axum::extract::Query<ServeImageQuery>,
 ) -> impl IntoResponse {
+    if hosts::remote() {
+        return match hosts::filesystem("read", serde_json::json!({"path":query.path,"image":false}), None).await {
+            Ok(bytes) => match String::from_utf8(bytes) {
+                Ok(text) => (StatusCode::OK, [(header::CONTENT_TYPE,"text/plain; charset=utf-8")], text),
+                Err(_) => (StatusCode::BAD_REQUEST, [(header::CONTENT_TYPE,"text/plain; charset=utf-8")], "Not a UTF-8 text file".into()),
+            },
+            Err(error) => (StatusCode::BAD_GATEWAY, [(header::CONTENT_TYPE,"text/plain; charset=utf-8")], error),
+        };
+    }
     let path = std::path::Path::new(&query.path);
 
     let canonical = match path.canonicalize() {
@@ -1149,9 +1274,9 @@ async fn send_key(Json(payload): Json<SendKeyRequest>) -> impl IntoResponse {
     };
 
     // Send the key as a tmux key sequence (not literal, no Enter)
-    let result = Command::new("tmux")
+    let result = hosts::tmux()
         .args(["send-keys", "-t", &session, &payload.key])
-        .output();
+        .output().await;
 
     match result {
         Ok(output) => {
@@ -1211,7 +1336,8 @@ fn validate_window_name(name: &str) -> Result<(), String> {
 /// The coding agents a new window can start. Every one launches with approvals
 /// bypassed so the window never sits waiting on a permission prompt:
 /// `claude`/`agy` take `--dangerously-skip-permissions`, `codex` takes its
-/// `--yolo` alias, and `eunice` has no approval prompts at all, so it runs bare.
+/// `--yolo` alias, Hermes also takes `--yolo`, and `eunice` has no approval
+/// prompts at all, so it runs bare.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 enum Agent {
     Claude,
@@ -1219,6 +1345,7 @@ enum Agent {
     Codex,
     Agy,
     Eunice,
+    Hermes,
 }
 
 impl Agent {
@@ -1228,6 +1355,7 @@ impl Agent {
             "codex" => Some(Agent::Codex),
             "agy" => Some(Agent::Agy),
             "eunice" => Some(Agent::Eunice),
+            "hermes" => Some(Agent::Hermes),
             _ => None,
         }
     }
@@ -1239,6 +1367,7 @@ impl Agent {
             Agent::Codex => "codex",
             Agent::Agy => "agy",
             Agent::Eunice => "eunice",
+            Agent::Hermes => "hermes",
         }
     }
 
@@ -1248,6 +1377,7 @@ impl Agent {
             Agent::Codex => "codex --yolo",
             Agent::Agy => "agy --dangerously-skip-permissions",
             Agent::Eunice => "eunice",
+            Agent::Hermes => "hermes --yolo",
         }
     }
 }
@@ -1388,14 +1518,9 @@ fn parse_eunice_models(output: &str) -> Vec<EuniceModel> {
 /// shells, and the new window is one — so this is the list EUNICE itself
 /// will see there. The service's own environment has none of those keys.
 async fn eunice_models() -> impl IntoResponse {
-    let run = tokio::process::Command::new("bash")
-        .args(["-ic", "eunice --list-models"])
-        .stdin(std::process::Stdio::null())
-        // An interactive bash with no terminal complains about job control
-        // on stderr; that noise is not an error.
-        .stderr(std::process::Stdio::null())
-        .output();
-    match tokio::time::timeout(std::time::Duration::from_secs(20), run).await {
+    let mut cmd = hosts::command("bash");
+    cmd.args(["-ic", "eunice --list-models"]).timeout(20);
+    match tokio::time::timeout(std::time::Duration::from_secs(21), cmd.output()).await {
         Ok(Ok(output)) if output.status.success() => (
             StatusCode::OK,
             Json(serde_json::json!({
@@ -1446,7 +1571,7 @@ fn requested_session(raw: Option<&str>) -> Result<String, String> {
 
 /// `session:` with no window part makes tmux append at the next free index.
 fn session_target(session: &str) -> String {
-    format!("{}:", session)
+    format!("={session}:")
 }
 
 /// Instruction files the other agents read. Each becomes a symlink to the
@@ -1497,10 +1622,35 @@ fn ensure_link(project_dir: &std::path::Path, name: &str) -> Result<bool, String
     }
 }
 
-fn read_pane_cwd(target: &str) -> Result<std::path::PathBuf, String> {
-    let output = Command::new("tmux")
+async fn host_canonical(path: &str) -> Result<std::path::PathBuf, String> {
+    if hosts::remote() {
+        let value = hosts::fs_json("canonical", serde_json::json!({"path":path})).await?;
+        Ok(std::path::PathBuf::from(value["path"].as_str().ok_or("Missing canonical path")?))
+    } else { std::fs::canonicalize(path).map_err(|e| e.to_string()) }
+}
+
+async fn host_instruction_links(path: &std::path::Path) -> Result<(), String> {
+    if hosts::remote() {
+        hosts::fs_json("links", serde_json::json!({"path":path})).await?;
+        Ok(())
+    } else { ensure_instruction_links(path).map(|_| ()) }
+}
+
+async fn host_project(name: &str) -> Result<String, String> {
+    if hosts::remote() {
+        let value = hosts::fs_json("project", serde_json::json!({"name":name})).await?;
+        Ok(value["path"].as_str().ok_or("Missing project path")?.to_string())
+    } else {
+        let dir = project_dirs_base().join(name);
+        std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
+        Ok(dir.to_string_lossy().to_string())
+    }
+}
+
+async fn read_pane_cwd(target: &str) -> Result<std::path::PathBuf, String> {
+    let output = hosts::tmux()
         .args(["display-message", "-p", "-t", target, "#{pane_current_path}"])
-        .output()
+        .output().await
         .map_err(|error| format!("could not inspect new window: {}", error))?;
     if !output.status.success() {
         return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
@@ -1515,9 +1665,9 @@ fn read_pane_cwd(target: &str) -> Result<std::path::PathBuf, String> {
 /// Start the chosen agent in a freshly-created interactive shell. Keep the
 /// literal payload and Enter in separate tmux calls: with `-l`, putting Enter
 /// in the same argv would type the word rather than press the key.
-fn launch_agent(target: &str, agent: Agent, model: Option<&str>) -> Result<(), String> {
-    send_keys_literal(target, &launch_command(agent, model))?;
-    send_keys(target, &["Enter".to_string()])
+async fn launch_agent(target: &str, agent: Agent, model: Option<&str>) -> Result<(), String> {
+    send_keys_literal(target, &launch_command(agent, model)).await?;
+    send_keys(target, &["Enter".to_string()]).await
 }
 
 /// Claude, Codex and AGY each ask "do you trust this folder?" the first time
@@ -1571,18 +1721,18 @@ fn is_trust_option(line: &str, labels: &[&str]) -> bool {
 /// default "No, exit" row quits the agent — so Enter is only ever sent after a
 /// fresh capture shows the cursor already on the yes row.
 fn auto_accept_trust_prompt(target: String) {
-    tokio::spawn(async move {
+    hosts::spawn(async move {
         let deadline = std::time::Instant::now() + std::time::Duration::from_secs(25);
         while std::time::Instant::now() < deadline {
             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-            let Some(pane) = capture_visible(&target) else {
+            let Some(pane) = capture_visible(&target).await else {
                 return;
             };
             let Some(keys) = trust_prompt_answer(&pane) else {
                 continue;
             };
             let key = keys[0];
-            if send_keys(&target, &[key.to_string()]).is_err() {
+            if send_keys(&target, &[key.to_string()]).await.is_err() {
                 return;
             }
             if key == "Enter" {
@@ -1634,18 +1784,23 @@ async fn new_window(body: Option<Json<NewWindowRequest>>) -> impl IntoResponse {
             );
         }
     };
-    let result = Command::new("tmux")
+    let result = hosts::tmux()
         .args([
             "new-window", "-t", &session_target(&session), "-P", "-F",
-            "#{session_name}:#{window_index}",
+            "#{window_id}\t#{session_name}:#{window_index}",
         ])
-        .output();
+        .output().await;
 
     match result {
         Ok(output) => {
             if output.status.success() {
-                let target = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                let project_dir = match read_pane_cwd(&target) {
+                let raw = String::from_utf8_lossy(&output.stdout).trim().to_string();
+                let Some((window_id, target)) = raw.split_once('\t') else {
+                    return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success":false,"error":"Invalid new-window response"})));
+                };
+                let window_id = window_id.to_string();
+                let target = target.to_string();
+                let project_dir = match read_pane_cwd(&window_id).await {
                     Ok(path) => path,
                     Err(error) => {
                         return (
@@ -1658,7 +1813,7 @@ async fn new_window(body: Option<Json<NewWindowRequest>>) -> impl IntoResponse {
                         );
                     }
                 };
-                if let Err(error) = ensure_instruction_links(&project_dir) {
+                if let Err(error) = host_instruction_links(&project_dir).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({
@@ -1668,7 +1823,7 @@ async fn new_window(body: Option<Json<NewWindowRequest>>) -> impl IntoResponse {
                         })),
                     );
                 }
-                if let Err(error) = launch_agent(&target, agent, model.as_deref()) {
+                if let Err(error) = launch_agent(&window_id, agent, model.as_deref()).await {
                     return (
                         StatusCode::INTERNAL_SERVER_ERROR,
                         Json(serde_json::json!({
@@ -1678,12 +1833,13 @@ async fn new_window(body: Option<Json<NewWindowRequest>>) -> impl IntoResponse {
                         })),
                     );
                 }
-                auto_accept_trust_prompt(target.clone());
+                auto_accept_trust_prompt(window_id.clone());
                 (
                     StatusCode::OK,
                     Json(serde_json::json!({
                         "success": true,
                         "target": target,
+                        "window_id": window_id,
                         "agent": agent.name(),
                         "session": session,
                         "command": launch_command(agent, model.as_deref()),
@@ -1720,6 +1876,19 @@ struct NewWindowNamedRequest {
     /// EUNICE only: passed as `--model`.
     #[serde(default)]
     model: Option<String>,
+}
+
+async fn create_project_window(session: &str, dir: &str, name: &str) -> std::io::Result<std::process::Output> {
+    let exists = hosts::tmux().args(["has-session", "-t", &format!("={session}")]).output().await?;
+    let mut command = hosts::tmux();
+    if exists.status.success() {
+        command.args(["new-window", "-t", &session_target(session)]);
+    } else {
+        // The normal session may not exist yet on a newly connected host.
+        // Create it directly in the chosen project, never in MASTER.
+        command.args(["new-session", "-d", "-s", session]);
+    }
+    command.args(["-c", dir, "-n", name, "-P", "-F", "#{window_id}\t#{session_name}:#{window_index}"]).output().await
 }
 
 async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl IntoResponse {
@@ -1759,20 +1928,22 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
         }
     };
 
+    let _creation = lock_host_action(&format!("create-session:{session}")).await;
+
     // 1. Existing window with this exact name? Read-only — no select-window probe
     //    (that would switch the user's active window as a side effect).
-    if let Ok(out) = Command::new("tmux")
+    if let Ok(out) = hosts::tmux()
         .args([
             "list-windows", "-a", "-F",
             "#{window_id}\t#{window_name}\t#{session_name}:#{window_index}",
         ])
-        .output()
+        .output().await
     {
         if out.status.success() {
             let stdout = String::from_utf8_lossy(&out.stdout);
             for line in stdout.lines() {
                 let parts: Vec<&str> = line.split('\t').collect();
-                if parts.len() == 3 && parts[1] == name {
+                if parts.len() == 3 && parts[1] == name && parts[2].rsplit_once(':').is_some_and(|(s,_)| s == session) {
                     return (
                         StatusCode::OK,
                         Json(serde_json::json!({
@@ -1785,25 +1956,16 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
         }
     }
 
-    // 2. Resolve ~/p/<name> and create it.
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".to_string());
-    let dir = format!("{}/p/{}", home, name);
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        return (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"success": false, "error": format!("mkdir failed: {}", e)})),
-        );
-    }
+    // Resolve projects on the destination host; files are never synchronized.
+    let dir = match host_project(&name).await {
+        Ok(dir) => dir,
+        Err(error) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success":false,"error":error}))),
+    };
 
     // 3. Create the window IN that dir, in the requested session. -n makes the
     //    name permanent; -P -F returns the stable window_id (targeting by name
     //    would hit the oldest duplicate).
-    let create = Command::new("tmux")
-        .args([
-            "new-window", "-t", &session_target(&session), "-c", &dir, "-n", &name, "-P", "-F",
-            "#{window_id}\t#{session_name}:#{window_index}",
-        ])
-        .output();
+    let create = create_project_window(&session, &dir, &name).await;
     let (window_id, target) = match create {
         Ok(out) if out.status.success() => {
             let s = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -1833,16 +1995,19 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
 
     // 4. Verify the pane actually started in <dir> BEFORE launching an agent
     //    with approvals bypassed. Never fire it in an unintended dir.
-    let expected = std::fs::canonicalize(&dir).unwrap_or_else(|_| std::path::PathBuf::from(&dir));
-    let actual = Command::new("tmux")
+    let expected = match host_canonical(&dir).await {
+        Ok(path) => path,
+        Err(error) => return (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success":false,"error":error,"window_id":window_id,"target":target}))),
+    };
+    let actual = hosts::tmux()
         .args(["display-message", "-p", "-t", &window_id, "#{pane_current_path}"])
-        .output()
+        .output().await
         .ok()
         .filter(|o| o.status.success())
         .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
         .unwrap_or_default();
     let actual_canon =
-        std::fs::canonicalize(&actual).unwrap_or_else(|_| std::path::PathBuf::from(&actual));
+        host_canonical(&actual).await.unwrap_or_default();
     if actual_canon != expected {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
@@ -1856,7 +2021,7 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
 
     // 5. Point the other agents' instruction files at CLAUDE.md when they do
     //    not already exist. Never replace an existing file or symlink.
-    if let Err(error) = ensure_instruction_links(&expected) {
+    if let Err(error) = host_instruction_links(&expected).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
@@ -1870,7 +2035,7 @@ async fn new_window_named(Json(payload): Json<NewWindowNamedRequest>) -> impl In
 
     // 6. Launch the chosen agent only after the instruction links are ready,
     //    then answer its first-launch trust prompt if it shows one.
-    if let Err(error) = launch_agent(&window_id, agent, model.as_deref()) {
+    if let Err(error) = launch_agent(&window_id, agent, model.as_deref()).await {
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(serde_json::json!({
@@ -1915,15 +2080,15 @@ async fn move_window(Json(payload): Json<MoveWindowRequest>) -> impl IntoRespons
     };
 
     // Use swap-window to swap the two positions
-    let result = Command::new("tmux")
+    let result = hosts::tmux()
         .args([
             "swap-window",
             "-s",
-            &format!("{}:{}", session, payload.from_index),
+            &format!("={}:{}", session, payload.from_index),
             "-t",
-            &format!("{}:{}", session, payload.to_index),
+            &format!("={}:{}", session, payload.to_index),
         ])
-        .output();
+        .output().await;
 
     match result {
         Ok(output) => {
@@ -1974,9 +2139,9 @@ async fn rename_window(Json(payload): Json<RenameWindowRequest>) -> impl IntoRes
         );
     }
 
-    let result = Command::new("tmux")
+    let result = hosts::tmux()
         .args(["rename-window", "-t", &target, &name])
-        .output();
+        .output().await;
 
     match result {
         Ok(output) => {
@@ -2040,9 +2205,9 @@ async fn kill_window(Json(payload): Json<KillWindowRequest>) -> impl IntoRespons
         }
     };
 
-    let result = Command::new("tmux")
+    let result = hosts::tmux()
         .args(["kill-window", "-t", &target])
-        .output();
+        .output().await;
 
     match result {
         Ok(output) => {
@@ -2075,7 +2240,7 @@ async fn kill_window(Json(payload): Json<KillWindowRequest>) -> impl IntoRespons
     }
 }
 
-#[derive(Clone, Serialize)]
+#[derive(Clone, Serialize, Deserialize)]
 struct ProjectDir {
     name: String,
     mtime: u64,
@@ -2174,6 +2339,12 @@ fn collect_project_dirs(base: &std::path::Path) -> Vec<ProjectDir> {
 /// The whole list ships in one response when the new-window modal opens, so
 /// the client can filter keystroke-by-keystroke without a round trip.
 async fn project_dirs() -> impl IntoResponse {
+    if hosts::remote() {
+        return match hosts::fs_json("dirs", serde_json::json!({})).await {
+            Ok(value) => (StatusCode::OK, Json(ProjectDirsResponse { dirs: serde_json::from_value(value["dirs"].clone()).unwrap_or_default() })),
+            Err(_) => (StatusCode::BAD_GATEWAY, Json(ProjectDirsResponse { dirs: vec![] })),
+        };
+    }
     let (dirs, should_refresh) = {
         let mut cache = lock_project_dir_cache();
         let stale = cache.refreshed_at.elapsed() >= PROJECT_DIR_CACHE_TTL;
@@ -2886,28 +3057,6 @@ struct UploadQuery {
     name: String,
 }
 
-/// Resolve the working directory of the selected tmux pane, falling back to $HOME.
-fn pane_cwd(target: &str) -> std::path::PathBuf {
-    let target = if target.is_empty() { "0" } else { target };
-    if let Ok(out) = Command::new("tmux")
-        .args(["display-message", "-p", "-t", target, "#{pane_current_path}"])
-        .output()
-    {
-        if out.status.success() {
-            let path = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if !path.is_empty() {
-                let pb = std::path::PathBuf::from(&path);
-                if pb.is_dir() {
-                    return pb;
-                }
-            }
-        }
-    }
-    std::env::var("HOME")
-        .map(std::path::PathBuf::from)
-        .unwrap_or_else(|_| std::path::PathBuf::from("."))
-}
-
 /// Reduce an uploaded filename to a safe basename (strips directories and traversal).
 fn safe_filename(name: &str) -> Option<String> {
     let base = std::path::Path::new(name)
@@ -2929,26 +3078,25 @@ fn safe_filename(name: &str) -> Option<String> {
     }
 }
 
-/// Pick a destination path that does not overwrite an existing file.
-fn unique_destination(dir: &std::path::Path, filename: &str) -> std::path::PathBuf {
-    let first = dir.join(filename);
-    if !first.exists() {
-        return first;
-    }
-    let p = std::path::Path::new(filename);
-    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or(filename);
-    let ext = p.extension().and_then(|s| s.to_str());
-    for n in 1..10000 {
-        let candidate_name = match ext {
-            Some(e) => format!("{}-{}.{}", stem, n, e),
-            None => format!("{}-{}", stem, n),
+fn save_upload(dir: &std::path::Path, filename: &str, body: &[u8]) -> Result<std::path::PathBuf, String> {
+    use std::io::Write;
+    let mut temp = tempfile::Builder::new().prefix(".tmux-upload-").tempfile_in(dir).map_err(|e| e.to_string())?;
+    temp.write_all(body).map_err(|e| e.to_string())?;
+    temp.as_file().sync_all().map_err(|e| e.to_string())?;
+    let path = std::path::Path::new(filename);
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or(filename);
+    for n in 0..10000 {
+        let name = if n == 0 { filename.to_string() } else {
+            match path.extension().and_then(|s| s.to_str()) { Some(ext) => format!("{stem}-{n}.{ext}"), None => format!("{stem}-{n}") }
         };
-        let candidate = dir.join(candidate_name);
-        if !candidate.exists() {
-            return candidate;
+        let dest = dir.join(name);
+        match temp.persist_noclobber(&dest) {
+            Ok(_) => return Ok(dest),
+            Err(error) if error.error.kind() == std::io::ErrorKind::AlreadyExists => temp = error.file,
+            Err(error) => return Err(error.error.to_string()),
         }
     }
-    first
+    Err("No unused filename available".into())
 }
 
 /// Receive a raw file body and write it into the selected pane's working directory.
@@ -2973,30 +3121,28 @@ async fn upload_file(
         );
     }
 
-    let dir = pane_cwd(&query.target);
-    let dest = unique_destination(&dir, &filename);
-
-    match tokio::fs::write(&dest, &body).await {
-        Ok(()) => {
-            let path = dest.to_string_lossy().to_string();
-            let saved_name = dest
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or(filename);
-            (
-                StatusCode::OK,
-                Json(serde_json::json!({
-                    "success": true,
-                    "path": path,
-                    "name": saved_name,
-                    "size": body.len(),
-                })),
-            )
-        }
-        Err(e) => (
-            StatusCode::INTERNAL_SERVER_ERROR,
-            Json(serde_json::json!({"success": false, "error": e.to_string()})),
-        ),
+    if query.target.trim().is_empty() {
+        return (StatusCode::BAD_REQUEST, Json(serde_json::json!({"success":false,"error":"Choose a window before uploading"})));
+    }
+    let dir = match read_pane_cwd(&query.target).await {
+        Ok(dir) => dir,
+        Err(error) => return (StatusCode::CONFLICT, Json(serde_json::json!({"success":false,"error":error}))),
+    };
+    if hosts::remote() {
+        let data = serde_json::json!({"dir":dir,"name":filename,"size":body.len()});
+        return match hosts::filesystem("upload", data, Some(body.to_vec())).await {
+            Ok(bytes) => match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                Ok(mut data) => { data["host"] = hosts::current().id.into(); (StatusCode::OK, Json(data)) },
+                Err(_) => (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"success":false,"error":"Invalid upload response"}))),
+            },
+            Err(error) => (StatusCode::BAD_GATEWAY, Json(serde_json::json!({"success":false,"error":error}))),
+        };
+    }
+    let size = body.len();
+    let result = tokio::task::spawn_blocking(move || save_upload(&dir, &filename, &body)).await;
+    match result {
+        Ok(Ok(dest)) => (StatusCode::OK, Json(serde_json::json!({"success":true,"path":dest,"name":dest.file_name().and_then(|s| s.to_str()),"size":size,"host":hosts::current().id}))),
+        other => (StatusCode::INTERNAL_SERVER_ERROR, Json(serde_json::json!({"success":false,"error":format!("Upload failed: {:?}",other)}))),
     }
 }
 
@@ -3007,6 +3153,7 @@ async fn main() {
 
     // Build the expensive RECENT-project list before accepting requests. All
     // later refreshes are stale-while-refresh and never hold up the modal.
+    hosts::registry();
     prime_project_dir_cache();
 
     let config = Arc::new(AppConfig {
@@ -3037,6 +3184,8 @@ async fn main() {
         .route("/api/picker/text", post(picker_text))
         .route("/api/window-status", get(window_status))
         .route("/api/config", get(get_config))
+        .route("/api/hosts", get(hosts::list))
+        .route("/api/agents", get(hosts::agents))
         .route("/api/new-window", post(new_window))
         .route("/api/new-window-named", post(new_window_named))
         .route("/api/eunice-models", get(eunice_models))
@@ -3063,6 +3212,7 @@ async fn main() {
         .with_state(config)
         .fallback_service(static_service)
         .layer(CorsLayer::permissive())
+        .layer(axum::middleware::from_fn(hosts::route))
         .layer(axum::middleware::from_fn(web_assets::cache_control));
 
     println!("TMUX Terminal running on http://{}", addr);
@@ -3075,7 +3225,7 @@ async fn main() {
 #[cfg(test)]
 mod tests {
     use super::{
-        collect_project_dirs, detect_agent, ensure_instruction_links, launch_command,
+        collect_project_dirs, detect_agent, detect_running_agent, ensure_instruction_links, launch_command,
         parse_eunice_models, parse_working, requested_agent, requested_model,
         requested_session, strip_ansi, trust_prompt_answer, validate_kill_target,
         validate_model, validate_window_name, Agent, AgentKind,
@@ -3104,6 +3254,7 @@ mod tests {
         assert_eq!(Agent::Agy.command(), "agy --dangerously-skip-permissions");
         // EUNICE has no approval prompts, so there is nothing to bypass.
         assert_eq!(Agent::Eunice.command(), "eunice");
+        assert_eq!(Agent::Hermes.command(), "hermes --yolo");
     }
 
     #[test]
@@ -3112,13 +3263,14 @@ mod tests {
         assert_eq!(Agent::parse("Codex"), Some(Agent::Codex));
         assert_eq!(Agent::parse("AGY"), Some(Agent::Agy));
         assert_eq!(Agent::parse(" eunice "), Some(Agent::Eunice));
+        assert_eq!(Agent::parse("Hermes"), Some(Agent::Hermes));
         assert_eq!(Agent::parse("vim"), None);
         assert_eq!(Agent::parse(""), None);
     }
 
     #[test]
     fn agent_names_round_trip_for_the_client() {
-        for agent in [Agent::Claude, Agent::Codex, Agent::Agy, Agent::Eunice] {
+        for agent in [Agent::Claude, Agent::Codex, Agent::Agy, Agent::Eunice, Agent::Hermes] {
             assert_eq!(Agent::parse(agent.name()), Some(agent));
         }
     }
@@ -3455,10 +3607,48 @@ Antigravity CLI requires permission to read, edit, and execute files here.
     }
 
     #[test]
+    fn detects_hermes_from_its_live_ui() {
+        let idle = "Welcome to Hermes Agent! Type your message or /help for commands.\n ☤ glm-5.3-flash │ ctx -- │ 0s │ ⚠ YOLO\n❯ Ask anything\n";
+        assert_eq!(detect_agent(idle), Some(AgentKind::Hermes));
+        let busy = "( •_•)>⌐■-■ mulling... ⏱ 4s\n ☤ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel\n";
+        assert_eq!(detect_agent(busy), Some(AgentKind::Hermes));
+    }
+
+    #[test]
+    fn reads_hermes_working_and_clears_it_at_idle() {
+        let busy = "calling tool: execute_code (language=bash)\n( •_•)>⌐■-■ mulling... ⏱ 4s\n ☤ ❯ msg=interrupt · /queue · /bg · /steer · Ctrl+C cancel\n";
+        assert_eq!(parse_working(busy), Some(("Mulling".into(), "4s".into())));
+        let idle = format!("{busy}done\n ☤ glm-5.3-flash │ ctx 1% │ 2s\n❯ Ask anything\n");
+        assert!(parse_working(&idle).is_none());
+        let after_turn = include_str!("../tests/fixtures/hermes/idle_after_turn.txt");
+        assert!(parse_working(&format!("{busy}{after_turn}")).is_none());
+        assert_eq!(detect_agent(after_turn), Some(AgentKind::Hermes));
+        // A new busy composer after the same status bar remains busy.
+        assert!(parse_working(&format!("{after_turn}{busy}")).is_some());
+    }
+
+    #[test]
     fn detects_codex_without_mistaking_an_ordinary_node_process() {
         let codex = "╭── OpenAI Codex (v0.152.0) ──╮\n\n› Ask Codex to do anything\n";
         assert_eq!(detect_agent(codex), Some(AgentKind::Codex));
         assert_eq!(detect_agent("$ node server.js\nlistening\n"), None);
+    }
+
+    #[test]
+    fn foreground_cli_wins_over_another_agents_quoted_ui() {
+        let hermes = include_str!("../tests/fixtures/hermes/idle_after_turn.txt");
+        for (command, expected) in [
+            ("codex", Some(AgentKind::Codex)), ("claude", Some(AgentKind::Claude)),
+            ("agy", Some(AgentKind::Agy)), ("eunice", Some(AgentKind::Eunice)),
+            ("hermes", Some(AgentKind::Hermes)), ("python", Some(AgentKind::Hermes)),
+            ("python3", Some(AgentKind::Hermes)), ("node", None), ("bash", None), ("", None),
+        ] {
+            assert_eq!(detect_running_agent(hermes, command), expected, "{command}");
+        }
+        let discussion = "The Hermes icon is ☤.\nWelcome to Hermes Agent!\n$ ";
+        assert_eq!(detect_running_agent(discussion, "python"), None);
+        assert_eq!(detect_running_agent(discussion, "codex"), Some(AgentKind::Codex));
+        assert_eq!(detect_running_agent("› Ask Codex to do anything\n", "node"), Some(AgentKind::Codex));
     }
 
     #[test]
