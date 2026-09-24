@@ -1,0 +1,14 @@
+  Worked for 12m 55s · 9:49 PM
+
+• Queued follow-up inputs
+
+  May I temporarily stop sys1 inference, run this local Gemma conversion
+  pilot, then restore sys1? It currently occupies about 18.6 GB of the RTX
+  4090; the public sys1 site would stay up, but its inference API would be
+  unavailable during the test.
+
+  › 1. Run the pilot and restore sys1
+    2. Keep sys1 running; prepare only
+    3. Other
+
+  enter submit   ctrl+] skip   alt+↓ main prompt

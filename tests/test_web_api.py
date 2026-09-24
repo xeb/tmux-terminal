@@ -24,7 +24,7 @@ a = sys.argv[1:]
 def pane():
     if 'capture_text' in s: return s['capture_text']
     if s['mode'] == 'queued': return (root / 'queued.txt').read_text()
-    if s['mode'] == 'done': return '› Ask Codex to do anything\n  gpt-6-astra xhigh\n'
+    if s['mode'] == 'done': return '› Ask Codex to do anything\n  GPT-6-Astra xhigh\n'
     if s.get('text_only'):
         return (root / 'text.txt').read_text().replace('1 of 6', str(s['question']) + ' of 6').replace('Narrowest point and high near the thickest part\n  Before food', s.get('draft') or 'Type your answer')
     p = (root / 'active.txt').read_text().replace('1 of 2', str(s['question']) + ' of 2')
@@ -73,7 +73,10 @@ with tempfile.TemporaryDirectory(prefix='tmux-terminal-api-') as directory:
     (root / 'tmux').write_text(FAKE_TMUX)
     (root / 'tmux').chmod(0o755)
     for name, fixture in [('queued.txt', 'codex-queued.txt'), ('active.txt', 'codex-async.txt'), ('text.txt', 'codex-async-text.txt')]:
-        shutil.copyfile(ROOT / 'tests/fixtures/picker' / fixture, root / name)
+        # Exercise current compact chords and display-name casing throughout
+        # opening, returning to the composer, answering, and normal text sends.
+        pane = (ROOT / 'tests/fixtures/picker' / fixture).read_text()
+        (root / name).write_text(pane.replace(' + ', '+').replace('gpt-6-astra', 'GPT-6-Astra'))
     state_file = root / 'state.json'
     state_file.write_text(json.dumps({'mode': 'queued', 'question': 1, 'cursor': 0, 'keys': [], 'text': []}))
     with socket.socket() as sock:

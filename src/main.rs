@@ -123,7 +123,7 @@ fn detect_agent(pane: &str) -> Option<AgentKind> {
     });
     let has_model_footer = tail
         .iter()
-        .any(|line| line.trim_start().starts_with("gpt-") && line.contains(" · /"));
+        .any(|line| picker::codex_model_footer(line) && line.contains(" · /"));
     let has_active_input = tail.iter().take(15).any(|line| line.trim_start().starts_with('›'));
     if has_composer || has_question || (has_model_footer && has_active_input) {
         return Some(AgentKind::Codex);
@@ -3655,6 +3655,11 @@ Antigravity CLI requires permission to read, edit, and execute files here.
     fn detects_codex_question_after_the_banner_leaves_history() {
         let question = "  Question 1/1 (1 unanswered)\n  1. Alpha\n\n  enter to submit answer | esc to interrupt\n";
         assert_eq!(detect_agent(question), Some(AgentKind::Codex));
+    }
+
+    #[test]
+    fn detects_codex_capitalized_footer_with_a_custom_composer() {
+        assert_eq!(detect_agent("› Continue the experiment\n  GPT-6-Astra high · /tmp/project\n"), Some(AgentKind::Codex));
     }
 
     #[test]

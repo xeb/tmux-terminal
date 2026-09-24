@@ -17,6 +17,8 @@ The normal command draft stays intact throughout.
 its displayed entry key. `POST /api/picker/close` follows the displayed
 previous-question/main-prompt hints until the main composer is visible.
 Supported hints are Shift+Left/Right and Alt+Up/Down (including macOS symbols).
+Both spaced (`shift + ←`) and compact (`shift+←`) key hints are accepted, as
+are lowercase model IDs and capitalized display names such as `GPT-6-Astra`.
 Unknown hints and clipped or unrecognized layouts are refused. No Escape key
 is used for this transition because Codex can interpret it as an interruption.
 

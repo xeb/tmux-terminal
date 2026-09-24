@@ -1107,25 +1107,31 @@ pub struct QuestionQueue {
 }
 
 fn question_hint_key(hint: &str) -> Option<&'static str> {
-    match hint.trim() {
-        "shift + ←" => Some("S-Left"),
-        "shift + →" => Some("S-Right"),
-        "⌥ + ↑" | "alt + ↑" => Some("M-Up"),
-        "⌥ + ↓" | "alt + ↓" => Some("M-Down"),
+    // Codex renders compact key chords now; older releases spaced the plus.
+    let compact: String = hint.chars().filter(|c| !c.is_whitespace()).collect();
+    match compact.as_str() {
+        "shift+←" => Some("S-Left"),
+        "shift+→" => Some("S-Right"),
+        "⌥+↑" | "alt+↑" => Some("M-Up"),
+        "⌥+↓" | "alt+↓" => Some("M-Down"),
         _ => None,
     }
+}
+
+pub fn codex_model_footer(line: &str) -> bool {
+    line.trim_start().get(..4).is_some_and(|prefix| prefix.eq_ignore_ascii_case("gpt-"))
 }
 
 pub fn codex_main_prompt(pane: &str) -> bool {
     let tail: Vec<_> = pane.lines().rev().take(20).collect();
     let Some(composer) = tail.iter().position(|line| line.trim_start().starts_with('›')) else { return false };
-    tail[..composer].iter().any(|line| line.trim_start().starts_with("gpt-"))
+    tail[..composer].iter().any(|line| codex_model_footer(line))
 }
 
 pub fn question_queue(pane: &str) -> Option<QuestionQueue> {
     let lines: Vec<_> = pane.lines().rev().take(80).collect::<Vec<_>>().into_iter().rev().collect();
     let composer = lines.iter().rposition(|line| line.trim_start().starts_with('›'))?;
-    if !lines[composer..].iter().any(|line| line.trim_start().starts_with("gpt-")) {
+    if !lines[composer..].iter().any(|line| codex_model_footer(line)) {
         return None;
     }
     let queue = lines[..composer].iter().rposition(|line| line.trim() == "• Queued follow-up inputs")?;
@@ -1251,6 +1257,44 @@ mod async_question_tests {
     const QUEUED: &str = include_str!("../tests/fixtures/picker/codex-queued.txt");
     const ACTIVE: &str = include_str!("../tests/fixtures/picker/codex-async.txt");
     const TEXT: &str = include_str!("../tests/fixtures/picker/codex-async-text.txt");
+
+    #[test]
+    fn recognizes_macromunch_compact_queue_and_question() {
+        let queued = include_str!("../tests/fixtures/picker/codex-queued-compact.txt");
+        let active = include_str!("../tests/fixtures/picker/codex-async-compact.txt");
+        let queue = question_queue(queued).unwrap();
+        assert_eq!(queue.count, 1);
+        assert_eq!(queue.open_key, "S-Left");
+        assert!(codex_main_prompt(queued));
+        assert!(parse(queued).is_none());
+        let picker = parse(active).unwrap();
+        assert!(picker.codex_async && !picker.text_only);
+        assert_eq!(picker.options.len(), 3);
+        assert_eq!(picker.options[0].label, "Run the pilot and restore sys1");
+        assert!(picker.question.ends_with("unavailable during the test."));
+        assert_eq!(codex_question_back_key(active).as_deref(), Some("M-Down"));
+        assert!(!codex_main_prompt(active));
+        assert!(question_queue(&queued.replace("shift+←", "ctrl+x")).is_none());
+        assert!(question_queue(&queued.replace("GPT-6-Astra high", "ordinary output")).is_none());
+        assert!(question_queue(&format!("{queued}\n› echo unrelated\nordinary output")).is_none());
+    }
+
+    #[test]
+    fn accepts_spaced_and_compact_navigation_with_either_model_case() {
+        for model in ["gpt-6-astra", "GPT-6-Astra"] {
+            for (hint, key) in [("shift+←", "S-Left"), ("shift + ←", "S-Left"),
+                ("alt+↑", "M-Up"), ("⌥+↑", "M-Up"), ("alt + ↑", "M-Up")] {
+                let pane = QUEUED.replace("gpt-6-astra", model).replace("shift + ←", hint);
+                assert_eq!(question_queue(&pane).unwrap().open_key, key);
+                assert!(codex_main_prompt(&pane));
+            }
+        }
+        for (hint, key) in [("shift+→", "S-Right"), ("alt+↓", "M-Down"), ("⌥+↓", "M-Down")] {
+            let pane = ACTIVE.replace("shift + →", hint);
+            assert_eq!(codex_question_back_key(&pane).as_deref(), Some(key));
+            assert_eq!(parse(&pane).unwrap().fingerprint, parse(ACTIVE).unwrap().fingerprint);
+        }
+    }
 
     #[test]
     fn recognizes_multiline_drafts_and_spaced_progress_from_phone_report() {
