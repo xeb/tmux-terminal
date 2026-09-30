@@ -85,6 +85,9 @@ pub struct Opt {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Picker {
+    /// AGY displays numbers but selects with arrows followed by Enter.
+    #[serde(skip)]
+    pub arrow_select: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub codex_async: bool,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -269,6 +272,69 @@ pub fn parse(pane: &str) -> Option<Picker> {
         .or_else(|| parse_claude_review(pane))
         .or_else(|| parse_codex_dialog(pane))
         .or_else(|| parse_codex_async(pane))
+        .or_else(|| parse_agy_dialog(pane))
+}
+
+/// AGY's question modal has an ASCII cursor and its own navigation footer.
+/// Require the modal title, rule, numbered question, and live footer together.
+fn parse_agy_dialog(pane: &str) -> Option<Picker> {
+    let all: Vec<_> = pane.lines().collect();
+    let mut end = all.iter().rposition(|line| !line.trim().is_empty())? + 1;
+    if all[end - 1].trim().starts_with("esc to cancel") {
+        end -= 1;
+    }
+    let mut footer = end;
+    while footer > 0 && end - footer < 3 && !all[footer - 1].trim().is_empty() {
+        footer -= 1;
+    }
+    let hints = all[footer..end].iter().map(|line| line.trim()).collect::<Vec<_>>().join(" ");
+    // AGY changes the action label on the last question in a batch.
+    let can_select = hints.contains("enter Select") || hints.contains("enter Submit All");
+    if !hints.contains("↑/↓ Navigate") || !can_select || !hints.contains("esc Skip") {
+        return None;
+    }
+    let start = footer.saturating_sub(MAX_BLOCK_LINES);
+    let rule = (start..footer).rev().find(|&i| is_rule(all[i]))?;
+    if rule == 0 || all[rule - 1].trim() != "Question" { return None; }
+    let question_start = (rule + 1..footer).find(|&i| !all[i].trim().is_empty())?;
+    let header_re = regex::Regex::new(r"^Question (\d+)/(\d+):\s*(.*)$").ok()?;
+    let matched = header_re.captures(all[question_start].trim())?;
+    let position = matched[1].parse::<usize>().ok()?;
+    let total = matched[2].parse::<usize>().ok()?;
+    if position == 0 || position > total { return None; }
+    let header = format!("Question {position}/{total}");
+    let scan = |line: &str| {
+        // Reuse numbered-row scanning without changing Codex's cursor rules.
+        let normalized = line.strip_prefix('>').map(|rest| format!("›{rest}"));
+        scan_codex_option_row(normalized.as_deref().unwrap_or(line))
+    };
+    let first = (question_start + 1..footer).find(|&i| scan(all[i]).is_some())?;
+    let mut parts = vec![matched[3].trim()];
+    parts.extend(all[question_start + 1..first].iter().map(|line| line.trim()).filter(|line| !line.is_empty()));
+    let question = parts.join(" ");
+    if question.trim().is_empty() { return None; }
+    let mut options: Vec<Opt> = Vec::new();
+    let mut cursor = None;
+    for line in &all[first..footer] {
+        if let Some(row) = scan(line) {
+            if row.number != Some(options.len() as u32 + 1) { return None; }
+            if row.is_cursor {
+                if cursor.is_some() { return None; }
+                cursor = Some(options.len());
+            }
+            let is_meta = matches!(row.text.as_str(), "Write-in..." | "Write-in…");
+            options.push(Opt { number: row.number, label: row.text, description: None, is_meta });
+        } else if !line.trim().is_empty() {
+            options.last_mut()?.label.push_str(&format!(" {}", line.trim()));
+        }
+    }
+    if options.len() < 2 { return None; }
+    let fingerprint = fingerprint_of(&format!("agy:{header}:{question}"), Layout::List, &options);
+    Some(Picker {
+        arrow_select: true, codex_async: false, text_only: false, answer_draft: None,
+        fingerprint, header: Some(header), question, cursor: cursor?,
+        layout: Layout::List, options, preview: None,
+    })
 }
 
 fn parse_claude_dialog(pane: &str) -> Option<Picker> {
@@ -430,6 +496,7 @@ fn parse_claude_dialog(pane: &str) -> Option<Picker> {
     let fingerprint = fingerprint_of(&question, layout, &options);
 
     Some(Picker {
+        arrow_select: false,
         codex_async: false,
         text_only: false,
         answer_draft: None,
@@ -505,6 +572,7 @@ fn parse_claude_review(pane: &str) -> Option<Picker> {
 
     let fingerprint = fingerprint_of(&question, Layout::List, &options);
     Some(Picker {
+        arrow_select: false,
         codex_async: false,
         text_only: false,
         answer_draft: None,
@@ -636,6 +704,7 @@ fn parse_codex_dialog(pane: &str) -> Option<Picker> {
         .to_string();
     let fingerprint = fingerprint_of(&question, Layout::List, &options);
     Some(Picker {
+        arrow_select: false,
         codex_async: false,
         text_only: false,
         answer_draft: None,
@@ -807,6 +876,61 @@ pub fn select_key(number: Option<u32>) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn parses_live_agy_questions_and_tracks_question_position() {
+        let pane = include_str!("../tests/fixtures/picker/agy.txt");
+        let p = parse(pane).expect("intern's AGY question must be displayed");
+        assert!(p.arrow_select);
+        assert!(!p.codex_async);
+        assert_eq!(p.header.as_deref(), Some("Question 1/2"));
+        assert!(p.question.ends_with("restarting the service?"));
+        assert_eq!(p.options.len(), 3);
+        assert_eq!(p.cursor, 0);
+        assert_eq!(p.options[1].label, "Wait for the turn to time out before restarting.");
+        assert!(is_input_row(&p.options[2]));
+        let moved = pane.replace("> 1.", "  1.").replace("  2.", "> 2.");
+        assert_eq!(parse(&moved).unwrap().cursor, 1);
+        assert_eq!(parse(&moved).unwrap().fingerprint, p.fingerprint);
+        assert_ne!(parse(&pane.replace("Question 1/2:", "Question 2/2:")).unwrap().fingerprint, p.fingerprint);
+        let wrapped = pane.replace(" · enter Select", "\n  · enter Select");
+        assert_eq!(parse(&wrapped).unwrap().fingerprint, p.fingerprint);
+    }
+
+    #[test]
+    fn refuses_stale_or_incomplete_agy_questions() {
+        let pane = include_str!("../tests/fixtures/picker/agy.txt");
+        for invalid in [
+            format!("{pane}\nAnswer received\n> Type a message\n"),
+            pane.replace("enter Select", "working"),
+            pane.replace("Question\n", "Transcript\n"),
+            pane.replace("> 1.", "  1."),
+            pane.replace("  2.", "  4."),
+            pane.replace("  2.", "> 2."),
+            pane.replace("Question 1/2:", "Question 0/2:"),
+        ] {
+            assert!(parse(&invalid).is_none(), "accepted invalid pane: {invalid}");
+        }
+    }
+
+    #[test]
+    fn parses_agy_final_question_with_submit_all_and_wrapped_options() {
+        let pane = include_str!("../tests/fixtures/picker/agy-final.txt");
+        let p = parse(pane).expect("the last AGY question must remain answerable");
+        assert!(p.arrow_select);
+        assert_eq!(p.header.as_deref(), Some("Question 2/2"));
+        assert_eq!(p.cursor, 0);
+        assert_eq!(p.options.len(), 3);
+        assert!(p.question.ends_with("should they be recreated now?"));
+        assert!(p.options[0].label.ends_with("running `agy --dangerously-skip-permissions`."));
+        assert_eq!(p.options[1].label, "Keep the existing tmux windows running Codex and only use agy for newly created windows.");
+        assert!(p.options[2].is_meta);
+        let wrapped = pane.replace(" · enter Submit All", "\n  · enter Submit All");
+        assert_eq!(parse(&wrapped).unwrap().fingerprint, p.fingerprint);
+        assert_ne!(parse(include_str!("../tests/fixtures/picker/agy.txt")).unwrap().fingerprint, p.fingerprint);
+        assert!(parse(&format!("{pane}\nAnswers submitted\n> Type a message\n")).is_none());
+        assert!(parse(&pane.replace("enter Submit All", "working")).is_none());
+    }
 
     fn fixture(name: &str) -> String {
         let path = format!(
@@ -1247,7 +1371,7 @@ fn parse_codex_async(pane: &str) -> Option<Picker> {
     last.is_meta = true;
     last.label = if text_only { "Write an answer" } else { "Other (write an answer)" }.to_string();
     let fingerprint = fingerprint_of(&format!("codex-async:{}:{question}", header.as_deref().unwrap_or("")), Layout::List, &options);
-    Some(Picker { codex_async: true, text_only, answer_draft, fingerprint, header: header.or(Some("Question".to_string())), question,
+    Some(Picker { arrow_select: false, codex_async: true, text_only, answer_draft, fingerprint, header: header.or(Some("Question".to_string())), question,
         cursor: cursor?, layout: Layout::List, options, preview: None })
 }
 

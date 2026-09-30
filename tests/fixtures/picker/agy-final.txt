@@ -1,0 +1,15 @@
+Question
+─────────────────────────────────────────────────────────────────────────────────
+
+Question 2/2: The three active tmux windows (`intern_mark MASTER`, `intern_elaine
+MASTER`, `intern_APPLE MASTER`) are currently running Codex processes. To switch
+them to `agy --dangerously-skip-permissions`, should they be recreated now?
+
+> 1. (Recommended) Yes, restart the three windows so ensure-window recreates them
+running `agy --dangerously-skip-permissions`.
+  2. Keep the existing tmux windows running Codex and only use agy for newly
+created windows.
+  3. Write-in...
+
+  ↑/↓ Navigate · ← Back · enter Submit All · esc Skip
+esc to cancel                                             Gemini 3.8 Flash · high

@@ -1,0 +1,14 @@
+Question
+─────────────────────────────────────────────────────────────────────────────────
+
+Question 1/2: Turn 89c31d04 ("Can you design a beautiful 8.5x11 card...") has
+been sitting in the `intern_mark MASTER` composer unchanged for over 13 minutes
+because Codex swallowed the submit key. How should we proceed with restarting the
+service?
+
+> 1. (Recommended) Cancel the wedged turn and proceed to restart internd now.
+  2. Wait for the turn to time out before restarting.
+  3. Write-in...
+
+  ↑/↓ Navigate · → Next · enter Select · esc Skip
+esc to cancel                                             Gemini 3.8 Flash · high

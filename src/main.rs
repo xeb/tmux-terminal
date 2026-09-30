@@ -588,7 +588,7 @@ async fn picker_select(Json(mut payload): Json<PickerSelectRequest>) -> impl Int
         return (StatusCode::OK, Json(PickerActionResponse { success: true, error: None,
             picker: Some(current), outcome: Some("awaiting_text".to_string()) }));
     }
-    let digit = if picker::is_input_row(chosen) {
+    let digit = if current.arrow_select || picker::is_input_row(chosen) {
         None
     } else {
         picker::select_key(chosen.number)

@@ -23,6 +23,10 @@ s = json.loads(path.read_text())
 a = sys.argv[1:]
 def pane():
     if 'capture_text' in s: return s['capture_text']
+    if s['mode'] == 'agy':
+        p = (root / ('agy-final.txt' if s['question'] == 2 else 'agy.txt')).read_text()
+        p = p.replace('> 1.', '  1.')
+        return p.replace('  ' + str(s['cursor'] + 1) + '.', '> ' + str(s['cursor'] + 1) + '.')
     if s['mode'] == 'queued': return (root / 'queued.txt').read_text()
     if s['mode'] == 'done': return '› Ask Codex to do anything\n  GPT-6-Astra xhigh\n'
     if s.get('text_only'):
@@ -49,6 +53,13 @@ elif a[0] == 'send-keys':
             s['last_paste'] = time.monotonic()
             if s.get('advance_during_paste'): s['question'] += 1
 
+    elif s['mode'] == 'agy':
+        if keys == ['Down']: s['cursor'] += 1
+        elif keys == ['Up']: s['cursor'] -= 1
+        elif keys == ['Enter']:
+            s['question'] += 1
+            s['cursor'] = 0
+            if s['question'] > 2: s['mode'] = 'done'
     elif keys == ['S-Left']: s['mode'] = 'active'
     elif keys == ['S-Right']:
         if s['question'] > 1: s['question'] -= 1
@@ -72,6 +83,8 @@ with tempfile.TemporaryDirectory(prefix='tmux-terminal-api-') as directory:
     shutil.copytree(ROOT / 'static', root / 'static', ignore=shutil.ignore_patterns('assets'))
     (root / 'tmux').write_text(FAKE_TMUX)
     (root / 'tmux').chmod(0o755)
+    shutil.copy(ROOT / 'tests/fixtures/picker/agy.txt', root / 'agy.txt')
+    shutil.copy(ROOT / 'tests/fixtures/picker/agy-final.txt', root / 'agy-final.txt')
     for name, fixture in [('queued.txt', 'codex-queued.txt'), ('active.txt', 'codex-async.txt'), ('text.txt', 'codex-async-text.txt')]:
         # Exercise current compact chords and display-name casing throughout
         # opening, returning to the composer, answering, and normal text sends.
@@ -192,7 +205,30 @@ with tempfile.TemporaryDirectory(prefix='tmux-terminal-api-') as directory:
         reply = request('/api/picker/text', {'target': '0:1', 'text': 'Delayed answer', 'fingerprint': fp})[2]
         assert reply['outcome'] == 'pending'
         assert ['Enter'] not in json.loads(state_file.read_text())['keys']
-        print('HTTP checks passed: versioned caching, history limits, queued questions, selection, safe text submission, and stale-answer rejection.')
+        # AGY's printed digits are not shortcuts. Verify observed movement
+        # followed by a separate Enter, advancing to the next question.
+        state = dict(mode='agy', question=1, cursor=0, keys=[], text=[], foreground='agy')
+        state_file.write_text(json.dumps(state))
+        capture = request('/api/capture', {'target': '0:1'})[2]
+        assert capture['agent'] == 'agy' and capture['picker']['header'] == 'Question 1/2'
+        assert request('/api/window-status')[2][0]['waiting']
+        fp = capture['picker']['fingerprint']
+        assert request('/api/picker/select', {'target': '0:1', 'fingerprint': 'stale', 'index': 1})[0] == 409
+        assert json.loads(state_file.read_text())['keys'] == []
+        status, _, chosen = request('/api/picker/select', {'target': '0:1', 'fingerprint': fp, 'index': 1})
+        assert status == 200 and chosen['outcome'] == 'changed', chosen
+        assert chosen['picker']['header'] == 'Question 2/2'
+        assert chosen['picker']['question'].endswith('should they be recreated now?')
+        assert chosen['picker']['options'][1]['label'].endswith('newly created windows.')
+        assert request('/api/capture', {'target': '0:1'})[2]['picker'] == chosen['picker']
+        assert request('/api/window-status')[2][0]['waiting']
+        assert json.loads(state_file.read_text())['keys'] == [['Down'], ['Enter']]
+        assert request('/api/picker/select', {'target': '0:1', 'fingerprint': fp, 'index': 0})[0] == 409
+        fp = chosen['picker']['fingerprint']
+        chosen = request('/api/picker/select', {'target': '0:1', 'fingerprint': fp, 'index': 0})[2]
+        assert chosen['outcome'] == 'committed', chosen
+        assert json.loads(state_file.read_text())['keys'] == [['Down'], ['Enter'], ['Enter']]
+        print('HTTP checks passed: versioned caching, history limits, queued questions, AGY selection, safe text submission, and stale-answer rejection.')
     except Exception:
         log.flush(); log.seek(0); print(log.read()[-3000:])
         raise
