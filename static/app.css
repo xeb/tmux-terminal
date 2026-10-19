@@ -280,6 +280,49 @@ body {
 }
 
 .terminal-line { min-height: 1.2em; }
+
+/* AGY emits thoughts and tool metadata in SGR 37 (mapped to #000 by default)
+   and starts the actual reply on the very next 2-space-indented row in default
+   foreground (#444) with no blank line. Flip that hierarchy so thoughts recede
+   and the opening reply row stands out with a divider rule and gutter marker. */
+.terminal-line.agy-trace,
+.terminal-line.agy-trace .ansi-run {
+    color: #6b6b6b !important;
+}
+.terminal-line.agy-trace .ansi-run[style*="font-weight:700"] {
+    color: #4a4a4a !important;
+}
+.terminal-line.agy-thought-body,
+.terminal-line.agy-thought-body .ansi-run {
+    color: #767676 !important;
+    font-style: italic;
+}
+.terminal-line.agy-trace-blank {
+    min-height: 0.5em;
+    line-height: 0.5;
+}
+.terminal-line.agy-reply {
+    color: #111111;
+}
+.terminal-line.agy-reply-start {
+    position: relative;
+    color: #000000;
+    font-weight: 500;
+    padding-top: 0.45em;
+    border-top: 1px solid #c4c4c4;
+}
+.terminal-line.agy-trace + .terminal-line.agy-reply-start {
+    margin-top: 0.5em;
+}
+.terminal-line.agy-reply-start::before {
+    content: '●';
+    position: absolute;
+    left: 0.1ch;
+    top: 0.45em;
+    color: #000000;
+    font-weight: 700;
+    pointer-events: none;
+}
 .history-load {
     position: absolute;
     top: 4px;

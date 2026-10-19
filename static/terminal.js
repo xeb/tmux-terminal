@@ -155,7 +155,11 @@ function ansiStyle(state) {
     return css.join(';');
 }
 
-function renderTerminalOutput(text, state = freshAnsiState()) {
+const AGY_PROMPT_FG = ansiColor(4);
+const AGY_THOUGHT_FG = ansiColor(7);
+const AGY_TOOL_FGS = new Set([ansiColor(1), ansiColor(2), ansiColor(3)]);
+
+function renderTerminalOutput(text, state = freshAnsiState(), meta = null) {
     let html = '';
     let plain = '';
 
@@ -171,7 +175,23 @@ function renderTerminalOutput(text, state = freshAnsiState()) {
         if (text.charCodeAt(i) !== 0x1b) {
             // Carriage return and backspace are cursor operations, not
             // printable output. Newline and tab remain ordinary text.
-            if (text[i] !== '\r' && text[i] !== '\b') plain += text[i];
+            const ch = text[i];
+            if (ch !== '\r' && ch !== '\b') {
+                plain += ch;
+                if (meta) {
+                    meta.plain += ch;
+                    if (ch !== ' ' && ch !== '\t' && ch !== '\n') {
+                        if (!meta.seenChar) {
+                            meta.seenChar = true;
+                            meta.firstFg = state.fg;
+                            meta.firstBold = state.bold;
+                            meta.allSgr37 = state.fg === AGY_THOUGHT_FG;
+                        } else if (meta.allSgr37 && state.fg !== AGY_THOUGHT_FG) {
+                            meta.allSgr37 = false;
+                        }
+                    }
+                }
+            }
             i += 1;
             continue;
         }
@@ -208,6 +228,60 @@ function renderTerminalOutput(text, state = freshAnsiState()) {
     return html;
 }
 
+// AGY prints thoughts and tool metadata in SGR 37 (`\x1b[37m`) and immediately
+// starts the assistant reply on the next 2-space-indented row in default
+// foreground with no blank line. Track the turn phase across rows so the CSS
+// layer can mute the thought/tool trace and visually anchor the reply start.
+function classifyAgyRow(meta, phase) {
+    const plain = meta.plain;
+    const trimmed = plain.trim();
+    if (!trimmed) {
+        return {
+            phase,
+            rowClass: phase === 'prompt' || phase === 'trace' ? 'agy-trace-blank' : '',
+        };
+    }
+    const atCol0 = !plain.startsWith(' ');
+    if (atCol0 && /^─{20,}$/.test(trimmed)) {
+        return { phase: 'idle', rowClass: '' };
+    }
+    if (atCol0 && /^─+\s*Conversation compacted\s*─+$/.test(trimmed)) {
+        return { phase: 'trace', rowClass: 'agy-trace' };
+    }
+    if (/^\s*(\? for shortcuts|esc to cancel)\s{2,}\S/.test(plain)) {
+        return { phase: 'idle', rowClass: '' };
+    }
+    if ((plain.startsWith('> ') && meta.firstFg === AGY_PROMPT_FG)
+            || (phase === 'prompt' && plain.startsWith('  ') && meta.firstFg === AGY_PROMPT_FG && meta.firstBold)) {
+        return { phase: 'prompt', rowClass: 'agy-prompt' };
+    }
+    const isThoughtHdr = atCol0 && /^[▸▾○]\s+Thought for\b/.test(trimmed);
+    const isTool = atCol0 && /^[●○]\s+\S/.test(trimmed) && AGY_TOOL_FGS.has(meta.firstFg);
+    const isMoreActions = atCol0 && /^…\s+\d+\s+more action/.test(trimmed);
+    const isSpinner = atCol0 && /^[\u2800-\u28FF]\s+\S.+\.\.\.$/.test(trimmed);
+    const isTip = atCol0 && trimmed.startsWith('└ Tip:');
+    const isOrphanTrace = phase === 'idle' && meta.allSgr37
+        && ((plain.startsWith('  ') && trimmed.endsWith('...')) || trimmed.endsWith('expand)'));
+    const isSgr37Trace = (phase === 'prompt' || phase === 'trace') && meta.allSgr37;
+    if (isThoughtHdr || isTool || isMoreActions || isSpinner || isTip || isOrphanTrace || isSgr37Trace) {
+        const isThoughtBody = (isSgr37Trace || isOrphanTrace) && plain.startsWith('  ') && !isThoughtHdr;
+        return {
+            phase: 'trace',
+            rowClass: isThoughtBody ? 'agy-trace agy-thought-body' : 'agy-trace',
+        };
+    }
+    if ((phase === 'prompt' || phase === 'trace') && plain.startsWith('  ')) {
+        return { phase: 'reply', rowClass: 'agy-reply agy-reply-start' };
+    }
+    if (phase === 'reply') {
+        if (meta.allSgr37 && (trimmed === '(ctrl+o to expand)' || trimmed === 'Sources:')) {
+            return { phase: 'reply', rowClass: 'agy-trace' };
+        }
+        return { phase: 'reply', rowClass: 'agy-reply' };
+    }
+    return { phase: 'idle', rowClass: '' };
+}
+
 // Reuse both parsed ANSI runs and DOM rows. A changing timer must not replace
 // the transcript above it. The incoming ANSI state is part of the cache key:
 // tmux can leave an attribute active across a newline.
@@ -233,9 +307,6 @@ class TerminalRenderer {
         const element = this.element;
         const atBottom = follow || element.scrollHeight - element.scrollTop <= element.clientHeight + 50;
         this.following = atBottom;
-        const anchor = atBottom ? null : this.rows.find(row =>
-            row.element.offsetTop + row.element.offsetHeight > element.scrollTop);
-        const anchorTop = anchor?.element.getBoundingClientRect().top;
         const oldScrollTop = element.scrollTop;
         const available = new Map();
         for (const row of this.rows) {
@@ -246,19 +317,23 @@ class TerminalRenderer {
         if (lines.at(-1) === '') lines.pop();
         const nextCache = new Map();
         let state = freshAnsiState();
+        let agyPhase = 'idle';
         const rows = lines.map(line => {
-            const key = JSON.stringify(state) + '\0' + line;
+            const key = agyPhase + '\0' + JSON.stringify(state) + '\0' + line;
             let parsed = this.cache.get(key) || nextCache.get(key);
             if (!parsed) {
-                const html = renderTerminalOutput(line, state);
-                parsed = { html, endState: { ...state } };
+                const meta = { plain: '', seenChar: false, firstFg: null, firstBold: false, allSgr37: false };
+                const html = renderTerminalOutput(line, state, meta);
+                const { phase: nextPhase, rowClass } = classifyAgyRow(meta, agyPhase);
+                parsed = { html, endState: { ...state }, nextPhase, rowClass };
             }
             state = { ...parsed.endState };
+            agyPhase = parsed.nextPhase;
             nextCache.set(key, parsed);
             const reused = available.get(key)?.shift();
             if (reused) return reused;
             const node = document.createElement('div');
-            node.className = 'terminal-line';
+            node.className = parsed.rowClass ? `terminal-line ${parsed.rowClass}` : 'terminal-line';
             node.innerHTML = parsed.html || '<br>';
             return { key, element: node };
         });
@@ -266,6 +341,13 @@ class TerminalRenderer {
         // Remove expired rows before inserting, so scrollback shifting by one
         // line doesn't move every retained row through the DOM.
         const keep = new Set(rows.map(row => row.element));
+        // A capture starting earlier can change the first visible row's
+        // incoming ANSI state and replace its DOM node. Anchor to the first
+        // surviving row, measuring its position before any nodes are removed.
+        const anchor = atBottom ? null : this.rows.find(row =>
+            keep.has(row.element)
+            && row.element.offsetTop + row.element.offsetHeight > oldScrollTop);
+        const anchorTop = anchor?.element.getBoundingClientRect().top;
         for (const child of [...element.childNodes]) {
             if (!keep.has(child)) child.remove();
         }
